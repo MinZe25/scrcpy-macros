@@ -111,6 +111,9 @@ class OverlayWindow(QWidget):
         self.new_primitive_opacity = 0.7  # Default opacity
         self.primitive_being_created = None  # Stores data for primitive being created
         self.start_point = None  # Start point for drag operations
+        self.selected_primitive_id = None  # ID of selected primitive
+        self.primitive_being_moved = False  # Flag to track if a primitive is being moved
+        self.delete_button_size = 20  # Size of the delete X button
 
         # --- Edit Mode Button ---
         self.edit_button = QPushButton("Edit Mode", self)
@@ -349,6 +352,48 @@ class OverlayWindow(QWidget):
             del DRAWING_PRIMITIVES[primitive_id]
             self.update()  # Request a repaint
 
+    def find_primitive_at_coords(self, device_x, device_y):
+        """Finds a primitive at the given device coordinates and returns its ID."""
+        for p_id, p_data in DRAWING_PRIMITIVES.items():
+            p_type = p_data['type']
+            center_x, center_y = p_data['center_coords']
+            dimensions = p_data['dimensions']
+
+            if p_type == 'circle':
+                radius = dimensions
+                # Calculate distance from center
+                distance = ((device_x - center_x) ** 2 + (device_y - center_y) ** 2) ** 0.5
+                if distance <= radius:
+                    return p_id
+            elif p_type == 'crosshair':
+                # Crosshairs have a small hitbox
+                line_length = dimensions
+                if (abs(device_x - center_x) <= 10 and abs(device_y - center_y) <= line_length) or \
+                   (abs(device_y - center_y) <= 10 and abs(device_x - center_x) <= line_length):
+                    return p_id
+        return None
+
+    def is_delete_button_hit(self, device_x, device_y):
+        """Checks if the delete button of the selected primitive was hit."""
+        if not self.selected_primitive_id or self.selected_primitive_id not in DRAWING_PRIMITIVES:
+            return False
+
+        p_data = DRAWING_PRIMITIVES[self.selected_primitive_id]
+        center_x, center_y = p_data['center_coords']
+        dimensions = p_data['dimensions']
+
+        if p_data['type'] == 'circle':
+            radius = dimensions
+            # Position of delete button is at top-right of circle
+            button_x = center_x + radius * 0.7  # Slightly inside the radius for better visibility
+            button_y = center_y - radius * 0.7
+
+            # Check if click is within delete button area
+            distance = ((device_x - button_x) ** 2 + (device_y - button_y) ** 2) ** 0.5
+            return distance <= self.delete_button_size / 2
+
+        return False
+
     def paintEvent(self, event):
         """
         This method is called when the widget needs to be repainted.
@@ -410,6 +455,35 @@ class OverlayWindow(QWidget):
                 radius = dimensions
                 # drawEllipse takes center coordinates directly
                 painter.drawEllipse(QPoint(int(center_x), int(center_y)), int(radius), int(radius))
+
+                # Draw selection indicator and delete button for selected primitive in edit mode
+                if self.edit_mode_active and p_id == self.selected_primitive_id:
+                    # Draw a dashed selection outline
+                    select_pen = QPen(Qt.white, 2, Qt.DashLine)
+                    painter.setPen(select_pen)
+                    painter.setBrush(Qt.NoBrush)
+                    # Draw slightly larger than the actual circle to show selection
+                    painter.drawEllipse(QPoint(int(center_x), int(center_y)), int(radius) + 5, int(radius) + 5)
+
+                    # Draw delete button (red X) at top-right of circle
+                    delete_x = center_x + radius * 0.7  # Position slightly inside the radius
+                    delete_y = center_y - radius * 0.7
+
+                    # Draw red circle for delete button
+                    delete_button_radius = self.delete_button_size / 2
+                    delete_color = QColor(255, 50, 50, 230)  # Bright semi-transparent red
+                    painter.setBrush(delete_color)
+                    painter.setPen(Qt.NoPen)
+                    painter.drawEllipse(QPoint(int(delete_x), int(delete_y)), 
+                                      int(delete_button_radius), int(delete_button_radius))
+
+                    # Draw X inside button
+                    painter.setPen(QPen(Qt.white, 2))
+                    x_size = delete_button_radius * 0.7
+                    painter.drawLine(int(delete_x - x_size), int(delete_y - x_size), 
+                                    int(delete_x + x_size), int(delete_y + x_size))
+                    painter.drawLine(int(delete_x + x_size), int(delete_y - x_size), 
+                                    int(delete_x - x_size), int(delete_y + x_size))
             elif p_type == 'crosshair':
                 line_length = dimensions
                 pen = QPen(color, 2)  # Use a pen for lines (line thickness 2)
@@ -455,12 +529,16 @@ class OverlayWindow(QWidget):
             painter.drawText(15 + shadow_offset, 60 + shadow_offset, f"EDIT MODE - {self.new_primitive_type.upper()}")
             painter.drawText(15 + shadow_offset, 90 + shadow_offset, "Press: C=Circle, ESC=Exit")
             painter.drawText(15 + shadow_offset, 120 + shadow_offset, "Click and drag to create circles")
+            painter.drawText(15 + shadow_offset, 150 + shadow_offset, "Click on circle to select, then:")
+            painter.drawText(15 + shadow_offset, 180 + shadow_offset, "- Drag to move, click X to delete")
 
             # Then draw the colored text on top
             painter.setPen(QPen(edit_text_color))
             painter.drawText(15, 60, f"EDIT MODE - CIRCLE")
             painter.drawText(15, 90, "Press: C=Circle, ESC=Exit")
             painter.drawText(15, 120, "Click and drag to create circles")
+            painter.drawText(15, 150, "Click on circle to select, then:")
+            painter.drawText(15, 180, "- Drag to move, click X to delete")
 
             # Draw an example of the current primitive type
             preview_color = QColor(*self.new_primitive_color)
@@ -533,7 +611,7 @@ class OverlayWindow(QWidget):
                 self.setFocus()
                 print("Activating window and setting focus in edit mode")
 
-            # In edit mode - handle the click to create a primitive
+            # In edit mode - handle the click 
             print("Edit mode click detected")
             # Get click position and convert to device coordinates
             pos = event.pos()
@@ -561,6 +639,31 @@ class OverlayWindow(QWidget):
                 # Store starting point for potential drag operations
                 self.start_point = (device_x, device_y)
 
+                # First check if we clicked on the delete button of the selected primitive
+                if self.selected_primitive_id and self.is_delete_button_hit(device_x, device_y):
+                    # Delete the selected primitive
+                    print(f"Deleting primitive {self.selected_primitive_id}")
+                    self.remove_primitive(self.selected_primitive_id)
+                    self.selected_primitive_id = None
+                    self.update()
+                    return
+
+                # Then check if we clicked on an existing primitive
+                clicked_primitive_id = self.find_primitive_at_coords(device_x, device_y)
+                if clicked_primitive_id:
+                    print(f"Selected existing primitive: {clicked_primitive_id}")
+                    self.selected_primitive_id = clicked_primitive_id
+                    self.primitive_being_moved = True
+                    # Update to show selection
+                    self.update()
+                    return
+                else:
+                    # If we didn't click on an existing primitive, deselect any selected primitive
+                    if self.selected_primitive_id:
+                        self.selected_primitive_id = None
+                        self.update()
+
+                # If no primitive was clicked, start creating a new one
                 # Initialize primitive being created (always circle now)
                 self.primitive_being_created = {
                     'type': 'circle',
@@ -637,49 +740,94 @@ class OverlayWindow(QWidget):
 
     def mouseMoveEvent(self, event):
         """
-        Handles mouse move events for primitive resizing in edit mode.
+        Handles mouse move events for primitive resizing or moving in edit mode.
         """
-        if self.edit_mode_active and self.primitive_being_created and self.start_point:
-            # Get current position in device coordinates
-            pos = event.pos()
+        if not self.edit_mode_active or not self.start_point:
+            return
 
-            # Calculate actual content area within the overlay (same as in mousePressEvent)
-            current_overlay_width = self.width()
-            current_overlay_height = self.height()
+        # Get current position in device coordinates
+        pos = event.pos()
 
-            scale_factor_x = current_overlay_width / self.device_width
-            scale_factor_y = current_overlay_height / self.device_height
-            actual_scale = min(scale_factor_x, scale_factor_y)
+        # Calculate actual content area within the overlay (same as in mousePressEvent)
+        current_overlay_width = self.width()
+        current_overlay_height = self.height()
 
-            scaled_content_width = self.device_width * actual_scale
-            scaled_content_height = self.device_height * actual_scale
+        scale_factor_x = current_overlay_width / self.device_width
+        scale_factor_y = current_overlay_height / self.device_height
+        actual_scale = min(scale_factor_x, scale_factor_y)
 
-            offset_x = (current_overlay_width - scaled_content_width) / 2
-            offset_y = (current_overlay_height - scaled_content_height) / 2
+        scaled_content_width = self.device_width * actual_scale
+        scaled_content_height = self.device_height * actual_scale
 
-            # Convert overlay position to device coordinates
-            device_x = (pos.x() - offset_x) / actual_scale
-            device_y = (pos.y() - offset_y) / actual_scale
+        offset_x = (current_overlay_width - scaled_content_width) / 2
+        offset_y = (current_overlay_height - scaled_content_height) / 2
 
-            # Only circle primitive creation is supported
+        # Convert overlay position to device coordinates
+        device_x = (pos.x() - offset_x) / actual_scale
+        device_y = (pos.y() - offset_y) / actual_scale
+
+        # Get distance moved from start point
+        start_x, start_y = self.start_point
+        dx = device_x - start_x
+        dy = device_y - start_y
+
+        # Handle moving an existing primitive
+        if self.primitive_being_moved and self.selected_primitive_id:
+            if self.selected_primitive_id in DRAWING_PRIMITIVES:
+                # Update the primitive's position
+                primitive = DRAWING_PRIMITIVES[self.selected_primitive_id]
+                old_center_x, old_center_y = primitive['center_coords']
+
+                # Move the primitive by the drag amount
+                new_center_x = old_center_x + dx
+                new_center_y = old_center_y + dy
+
+                # Ensure the primitive stays within bounds
+                if primitive['type'] == 'circle':
+                    radius = primitive['dimensions']
+                    new_center_x = max(radius, min(self.device_width - radius, new_center_x))
+                    new_center_y = max(radius, min(self.device_height - radius, new_center_y))
+
+                # Update the primitive's position
+                primitive['center_coords'] = (new_center_x, new_center_y)
+
+                # Update the start point for the next move event
+                self.start_point = (device_x, device_y)
+
+                self.update()  # Redraw
+                return
+
+        # Handle creating a new primitive
+        if self.primitive_being_created:
             # For circle: calculate radius based on distance from start point
-            start_x, start_y = self.start_point
-            dx = device_x - start_x
-            dy = device_y - start_y
             radius = int(((dx ** 2) + (dy ** 2)) ** 0.5)  # Euclidean distance
 
             # Update the primitive being created
             self.primitive_being_created['dimensions'] = radius
+            self.update()  # Redraw
 
             # Update to show the resized primitive
             self.update()
 
     def mouseReleaseEvent(self, event):
         """
-        Handles mouse release events to finalize primitive creation in edit mode.
+        Handles mouse release events to finalize primitive creation or movement in edit mode.
         """
-        if self.edit_mode_active and self.primitive_being_created and event.button() == 1:  # Left mouse button
+        if not self.edit_mode_active or event.button() != 1:  # Left mouse button
+            return
+
+        # Handle moving an existing primitive
+        if self.primitive_being_moved and self.selected_primitive_id:
+            print(f"Finished moving primitive {self.selected_primitive_id}")
+            self.primitive_being_moved = False
+            # Keep the primitive selected
+            self.update()
+            return
+
+        # Handle finishing primitive creation
+        if self.primitive_being_created:
             # Add the completed primitive to the list of primitives
+            new_primitive_id = f"primitive_{NEXT_PRIMITIVE_ID}"
             self.add_primitive(
                 self.primitive_being_created['type'],
                 self.primitive_being_created['color'],
@@ -694,15 +842,19 @@ class OverlayWindow(QWidget):
 
             # Clear the in-progress primitive
             self.primitive_being_created = None
-            self.start_point = None
 
-            # Make sure we keep focus after adding the primitive
-            self.activateWindow()
-            self.setFocus()
-            print("Maintaining focus after primitive creation")
+            # Select the newly created primitive
+            self.selected_primitive_id = new_primitive_id
 
-            # Update to show the final primitive
-            self.update()
+        # Clear the start point for all cases
+        self.start_point = None
+
+        # Make sure we keep focus
+        self.activateWindow()
+        self.setFocus()
+
+        # Update to show the final state
+        self.update()
 
     def focusInEvent(self, event):
         """
@@ -824,9 +976,11 @@ class OverlayWindow(QWidget):
                 }
             """)
 
-            # Clear any in-progress primitive creation
+            # Clear any in-progress primitive creation or selection
             self.primitive_being_created = None
             self.start_point = None
+            self.selected_primitive_id = None
+            self.primitive_being_moved = False
 
         self.update()  # Repaint to reflect edit mode change
     # --- End Edit Mode Methods ---
@@ -883,6 +1037,9 @@ if __name__ == "__main__":
     print("  - Press 'C' for circle mode")
     print("  - Press 'ESC' to exit edit mode")
     print("  - Press 'Delete' to cancel current circle creation")
+    print("  - Click on a circle to select it")
+    print("  - Drag a selected circle to move it")
+    print("  - Click the X button on a selected circle to delete it")
     print("\nTroubleshooting:")
     print("  - If keyboard shortcuts don't work, click on the overlay background to ensure it has focus")
     print("  - Make sure to click and drag within the actual device display area (not in black borders)")
