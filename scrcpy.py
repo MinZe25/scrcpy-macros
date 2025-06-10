@@ -106,7 +106,7 @@ class OverlayWindow(QWidget):
 
         # --- Edit Mode Variables ---
         self.edit_mode_active = False  # Tracks if edit mode is currently active
-        self.new_primitive_type = 'circle'  # Default primitive type to add
+        self.new_primitive_type = 'circle'  # Circle is the only primitive type now
         self.new_primitive_color = (50, 200, 50)  # Default color (softer green)
         self.new_primitive_opacity = 0.7  # Default opacity
         self.primitive_being_created = None  # Stores data for primitive being created
@@ -143,12 +143,7 @@ class OverlayWindow(QWidget):
 
         # Add primitives based on the hardcoded device resolution
 
-        # Blue square at the exact center of the device resolution
-        square_size = 100
-        # coords now represents the center of the square
-        self.add_primitive('rectangle', (0, 0, 255), 0.3,
-                           (self.device_width // 2, self.device_height // 2),
-                           (square_size, square_size))
+        # Initial primitives are only circles now
 
         # Red circle at the bottom-right corner of the device resolution
         # Its center is placed such that its right/bottom edge is at the device_width/height
@@ -415,12 +410,6 @@ class OverlayWindow(QWidget):
                 radius = dimensions
                 # drawEllipse takes center coordinates directly
                 painter.drawEllipse(QPoint(int(center_x), int(center_y)), int(radius), int(radius))
-            elif p_type == 'rectangle':
-                width, height = dimensions
-                # Calculate top-left corner from center coordinates
-                top_left_x = center_x - width / 2
-                top_left_y = center_y - height / 2
-                painter.drawRect(int(top_left_x), int(top_left_y), int(width), int(height))
             elif p_type == 'crosshair':
                 line_length = dimensions
                 pen = QPen(color, 2)  # Use a pen for lines (line thickness 2)
@@ -464,14 +453,14 @@ class OverlayWindow(QWidget):
             painter.setPen(QPen(shadow_color))
             painter.setBrush(QBrush(Qt.NoBrush))
             painter.drawText(15 + shadow_offset, 60 + shadow_offset, f"EDIT MODE - {self.new_primitive_type.upper()}")
-            painter.drawText(15 + shadow_offset, 90 + shadow_offset, "Press: C=Circle, R=Rectangle, ESC=Exit")
-            painter.drawText(15 + shadow_offset, 120 + shadow_offset, "Click and drag to create primitives")
+            painter.drawText(15 + shadow_offset, 90 + shadow_offset, "Press: C=Circle, ESC=Exit")
+            painter.drawText(15 + shadow_offset, 120 + shadow_offset, "Click and drag to create circles")
 
             # Then draw the colored text on top
             painter.setPen(QPen(edit_text_color))
-            painter.drawText(15, 60, f"EDIT MODE - {self.new_primitive_type.upper()}")
-            painter.drawText(15, 90, "Press: C=Circle, R=Rectangle, ESC=Exit")
-            painter.drawText(15, 120, "Click and drag to create primitives")
+            painter.drawText(15, 60, f"EDIT MODE - CIRCLE")
+            painter.drawText(15, 90, "Press: C=Circle, ESC=Exit")
+            painter.drawText(15, 120, "Click and drag to create circles")
 
             # Draw an example of the current primitive type
             preview_color = QColor(*self.new_primitive_color)
@@ -479,10 +468,8 @@ class OverlayWindow(QWidget):
             painter.setBrush(preview_color)
             painter.setPen(Qt.NoPen)
 
-            if self.new_primitive_type == 'circle':
-                painter.drawEllipse(350, 60, 30, 30)  # Small circle preview
-            elif self.new_primitive_type == 'rectangle':
-                painter.drawRect(335, 45, 60, 45)  # Small rectangle preview
+            # Only circle preview as it's the only primitive type available
+            painter.drawEllipse(350, 60, 30, 30)  # Small circle preview
 
             # Draw guide grid (lighter in edit mode to help with positioning)
             grid_color = QColor(200, 200, 200)
@@ -574,9 +561,9 @@ class OverlayWindow(QWidget):
                 # Store starting point for potential drag operations
                 self.start_point = (device_x, device_y)
 
-                # Initialize primitive being created
+                # Initialize primitive being created (always circle now)
                 self.primitive_being_created = {
-                    'type': self.new_primitive_type,
+                    'type': 'circle',
                     'color': self.new_primitive_color,
                     'opacity': self.new_primitive_opacity,
                     'center_coords': (device_x, device_y),
@@ -674,27 +661,15 @@ class OverlayWindow(QWidget):
             device_x = (pos.x() - offset_x) / actual_scale
             device_y = (pos.y() - offset_y) / actual_scale
 
-            if self.primitive_being_created['type'] == 'circle':
-                # For circle: calculate radius based on distance from start point
-                start_x, start_y = self.start_point
-                dx = device_x - start_x
-                dy = device_y - start_y
-                radius = int(((dx ** 2) + (dy ** 2)) ** 0.5)  # Euclidean distance
+            # Only circle primitive creation is supported
+            # For circle: calculate radius based on distance from start point
+            start_x, start_y = self.start_point
+            dx = device_x - start_x
+            dy = device_y - start_y
+            radius = int(((dx ** 2) + (dy ** 2)) ** 0.5)  # Euclidean distance
 
-                # Update the primitive being created
-                self.primitive_being_created['dimensions'] = radius
-
-            elif self.primitive_being_created['type'] == 'rectangle':
-                # For rectangle: calculate width and height
-                start_x, start_y = self.start_point
-                width = abs(device_x - start_x)
-                height = abs(device_y - start_y)
-
-                # Update center coordinates and dimensions
-                center_x = (device_x + start_x) / 2
-                center_y = (device_y + start_y) / 2
-                self.primitive_being_created['center_coords'] = (center_x, center_y)
-                self.primitive_being_created['dimensions'] = (width, height)
+            # Update the primitive being created
+            self.primitive_being_created['dimensions'] = radius
 
             # Update to show the resized primitive
             self.update()
@@ -765,17 +740,9 @@ class OverlayWindow(QWidget):
                 return
 
             elif key == 67:  # C key = 67
-                # Change primitive type to circle
+                # Circle is the only primitive type
                 self.new_primitive_type = 'circle'
                 print("Primitive type set to circle")
-                self.update()  # Update to refresh any UI indicators
-                event.accept()
-                return
-
-            elif key == 82:  # R key = 82
-                # Change primitive type to rectangle'
-                self.new_primitive_type = 'rectangle'
-                print("Primitive type set to rectangle")
                 self.update()  # Update to refresh any UI indicators
                 event.accept()
                 return
@@ -912,10 +879,10 @@ if __name__ == "__main__":
     print("Ensure 'adb.exe' is in your system's PATH environmental variable.")
     print("\nEdit Mode Controls:")
     print("  - Click 'Edit Mode' button to enter/exit edit mode")
-    print("  - In edit mode, click and drag to create primitives")
-    print("  - Press 'C' for circle mode, 'R' for rectangle mode")
+    print("  - In edit mode, click and drag to create circles")
+    print("  - Press 'C' for circle mode")
     print("  - Press 'ESC' to exit edit mode")
-    print("  - Press 'Delete' to cancel current primitive creation")
+    print("  - Press 'Delete' to cancel current circle creation")
     print("\nTroubleshooting:")
     print("  - If keyboard shortcuts don't work, click on the overlay background to ensure it has focus")
     print("  - Make sure to click and drag within the actual device display area (not in black borders)")
