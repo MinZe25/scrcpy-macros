@@ -604,14 +604,14 @@ class ScrcpyIntegratedApp(QMainWindow):
         # Set the overlay geometry to match the frame's geometry in the main window
         self.drawing_overlay.setGeometry(frame_rect_in_main_window)
         # Use our custom method to ensure overlay is properly visible and on top
-        if hasattr(self.drawing_overlay, 'ensure_on_top'):
-            self.drawing_overlay.ensure_on_top()
-        else:
+        # if hasattr(self.drawing_overlay, 'ensure_on_top'):
+        #     self.drawing_overlay.ensure_on_top()
+        # else:
             # Fallback to standard methods if ensure_on_top is not available
-            self.drawing_overlay.setVisible(True)
-            self.drawing_overlay.show()
-            self.drawing_overlay.raise_()
-            self.drawing_overlay.activateWindow()
+        self.drawing_overlay.setVisible(True)
+        self.drawing_overlay.show()
+        self.drawing_overlay.raise_()
+        self.drawing_overlay.activateWindow()
         # Force update to trigger immediate repaint
         self.drawing_overlay.update()
 

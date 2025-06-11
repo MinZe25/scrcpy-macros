@@ -30,11 +30,11 @@ class OverlayWidget(QWidget):
         super().showEvent(event)
         self.raise_()
 
-    def ensure_on_top(self):
-        """Ensures the overlay is on top of all other windows"""
-        self.show()
-        self.raise_()
-        self.activateWindow()
+    # def ensure_on_top(self):
+    #     """Ensures the overlay is on top of all other windows"""
+        # self.show()
+        # self.raise_()
+        # self.activateWindow()
 
     def paintEvent(self, event):
         # Get the ScrcpyIntegratedApp instance (parent)
