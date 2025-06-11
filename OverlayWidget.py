@@ -1,5 +1,5 @@
 from PyQt5.QtWidgets import QWidget
-from PyQt5.QtGui import QPainter, QColor, QPen
+from PyQt5.QtGui import QPainter, QColor, QPen, QMouseEvent
 from PyQt5.QtCore import Qt, QRectF, QRect, QPoint
 
 
@@ -11,7 +11,6 @@ class OverlayWidget(QWidget):
         # Set window flags to ensure it stays on top and is fully visible
         self.setWindowFlags(
             Qt.FramelessWindowHint |
-            Qt.WindowStaysOnTopHint |
             Qt.Tool  # Tool windows are shown on top of the application
         )
 
@@ -20,21 +19,73 @@ class OverlayWidget(QWidget):
 
         # Make sure the widget is visible
         self.setVisible(True)
-        self.raise_()  # Ensure this widget is on top
-
-        # We'll explicitly call raise_() from the parent to ensure z-order
+        self.raise_()  # Ensure this widget is on top in the parent's z-order
 
     def showEvent(self, event):
         """Called when the widget is shown"""
         print(f"Overlay widget shown: size={self.size()}, geometry={self.geometry()}")
         super().showEvent(event)
+        # Just raise within the parent widget's stack
         self.raise_()
 
-    # def ensure_on_top(self):
-    #     """Ensures the overlay is on top of all other windows"""
-        # self.show()
-        # self.raise_()
-        # self.activateWindow()
+    def mousePressEvent(self, event):
+        """Forward mouse press events to the parent application"""
+        # Pass the event to the parent if it exists and has a mousePressEvent method
+        parent = self.parent()
+        if parent and hasattr(parent, 'mousePressEvent'):
+            # Convert event position to parent's coordinate system
+            parent_pos = self.mapToParent(event.pos())
+            # Create a new QMouseEvent in the parent's coordinates
+            new_event = QMouseEvent(
+                event.type(),
+                parent_pos,
+                event.button(),
+                event.buttons(),
+                event.modifiers()
+            )
+            parent.mousePressEvent(new_event)
+        else:
+            super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        """Forward mouse move events to the parent application"""
+        parent = self.parent()
+        if parent and hasattr(parent, 'mouseMoveEvent'):
+            parent_pos = self.mapToParent(event.pos())
+            new_event = QMouseEvent(
+                event.type(),
+                parent_pos,
+                event.button(),
+                event.buttons(),
+                event.modifiers()
+            )
+            parent.mouseMoveEvent(new_event)
+        else:
+            super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        """Forward mouse release events to the parent application"""
+        parent = self.parent()
+        if parent and hasattr(parent, 'mouseReleaseEvent'):
+            parent_pos = self.mapToParent(event.pos())
+            new_event = QMouseEvent(
+                event.type(),
+                parent_pos,
+                event.button(),
+                event.buttons(),
+                event.modifiers()
+            )
+            parent.mouseReleaseEvent(new_event)
+        else:
+            super().mouseReleaseEvent(event)
+
+    def keyPressEvent(self, event):
+        """Forward key press events to the parent application"""
+        parent = self.parent()
+        if parent and hasattr(parent, 'keyPressEvent'):
+            parent.keyPressEvent(event)
+        else:
+            super().keyPressEvent(event)
 
     def paintEvent(self, event):
         # Get the ScrcpyIntegratedApp instance (parent)

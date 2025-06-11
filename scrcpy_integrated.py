@@ -7,6 +7,7 @@ import win32con
 import win32gui
 from PyQt5 import QtCore
 from PyQt5.QtCore import Qt, QPoint, QTimer, QPointF, QRectF, QRect, QEvent
+from PyQt5.QtGui import QMouseEvent
 from PyQt5.QtGui import QPainter, QColor, QPen
 from PyQt5.QtGui import QWindow
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QPushButton, QVBoxLayout,
@@ -75,6 +76,9 @@ class ScrcpyIntegratedApp(QMainWindow):
         # Initialize drawing primitives from the default template
         self.DRAWING_PRIMITIVES = DEFAULT_PRIMITIVES.copy()
         self.NEXT_PRIMITIVE_ID = NEXT_PRIMITIVE_ID
+
+        # Create the overlay widget but don't show it yet
+        # We'll properly position it after creating the scrcpy_frame
         self.drawing_overlay = OverlayWidget(self)
         self.drawing_overlay.installEventFilter(self)  # Install event filter to monitor events
         self.drawing_overlay.show()  # Explicitly show the overlay
@@ -205,14 +209,17 @@ class ScrcpyIntegratedApp(QMainWindow):
         # Install event filter to detect resize events
         self.scrcpy_frame.installEventFilter(self)
 
+        # Setup layout for the frame
         self.scrcpy_layout = QVBoxLayout(self.scrcpy_frame)
         self.scrcpy_layout.setContentsMargins(0, 0, 0, 0)
 
+        # Add scrcpy container to the layout
         self.scrcpy_layout.addWidget(self.scrcpy_container, 1)  # Give it stretch factor of 1 to fill the space
-        # Add to the splitter
+
+        # Add the frame to the splitter
         self.splitter.addWidget(self.scrcpy_frame)
 
-        # Ensure the container is properly reparented and raised in the widget stack
+        # Ensure the container is properly reparented
         self.scrcpy_container.setParent(self.scrcpy_frame)
         self.scrcpy_container.show()
 
@@ -589,29 +596,28 @@ class ScrcpyIntegratedApp(QMainWindow):
                 self.update()
 
     def update_overlay_geometry(self):
-        """Calculate the geometry of scrcpy_frame relative to the QMainWindow's viewport
-        and update the overlay widget's position and size accordingly."""
+        """Position the overlay within the scrcpy_frame to make it an overlay layer"""
         if not hasattr(self, 'drawing_overlay') or not self.scrcpy_frame:
             return
-        print("Update geometry")
-        # Calculate the global position of the scrcpy_frame
-        frame_global_pos = self.scrcpy_frame.mapToGlobal(QPoint(0, 0))
-        # Convert back to local coordinates within the main window
-        frame_local_pos_in_main_window = self.mapFromGlobal(frame_global_pos)
-        # Create a rectangle representing the frame's position and size in the main window
-        frame_rect_in_main_window = QRect(frame_local_pos_in_main_window, self.scrcpy_frame.size())
+        print("Update overlay geometry")
 
-        # Set the overlay geometry to match the frame's geometry in the main window
-        self.drawing_overlay.setGeometry(frame_rect_in_main_window)
-        # Use our custom method to ensure overlay is properly visible and on top
-        # if hasattr(self.drawing_overlay, 'ensure_on_top'):
-        #     self.drawing_overlay.ensure_on_top()
-        # else:
-            # Fallback to standard methods if ensure_on_top is not available
+        # Get the scrcpy_container and ensure it's valid
+        if not self.scrcpy_container or not self.scrcpy_container.isVisible():
+            print("Scrcpy container not visible, can't update overlay")
+            return
+
+        # Set the overlay to fill the entire frame
+        # Get the inner size of the frame (accounting for layout margins)
+        frame_content_rect = self.scrcpy_layout.contentsRect()
+
+        # Resize the overlay to match the frame's content area exactly
+        self.drawing_overlay.setGeometry(0, 0, self.scrcpy_frame.width(), self.scrcpy_frame.height())
+
+        # Make sure it's visible and on top of other widgets in the scrcpy_frame
         self.drawing_overlay.setVisible(True)
         self.drawing_overlay.show()
         self.drawing_overlay.raise_()
-        self.drawing_overlay.activateWindow()
+
         # Force update to trigger immediate repaint
         self.drawing_overlay.update()
 
