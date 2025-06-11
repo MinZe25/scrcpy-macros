@@ -2,21 +2,21 @@ import sys
 import subprocess
 import win32gui
 import win32con
-import time  # For potential small delays if needed
+import time
 
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QFrame, QSizePolicy, QSpacerItem, QDialog,
-    QStackedWidget, QSizeGrip, QSplitter, QTabWidget  # Added QSplitter and QTabWidget back for the original example
+    QStackedWidget, QSizeGrip
 )
-from PyQt5.QtGui import QPainter, QColor, QFont, QCursor, QWindow
+from PyQt5.QtGui import QPainter, QColor, QFont, QFontMetrics, QCursor, QWindow, QKeySequence
 from PyQt5.QtCore import Qt, QRect, QPoint, QRectF, QSize, QTimer, pyqtSignal, QEvent
 
+# Assuming settings_dialog.py exists in the same directory
 from settings_dialog import SettingsDialog
 
 # Constants for window resizing
 RESIZE_BORDER_WIDTH = 8
-# Masks for resize corners/edges
 CORNER_DRAG = True
 LEFT = 1
 RIGHT = 2
@@ -27,8 +27,11 @@ TOP_RIGHT = 6
 BOTTOM_LEFT = 9
 BOTTOM_RIGHT = 10
 
-# SCRCPY_WINDOW_TITLE_BASE is now a prefix/base, actual title will be dynamic per instance
 SCRCPY_WINDOW_TITLE_BASE = "Lindo_Scrcpy_Instance"
+
+# Aspect ratio of the Scrcpy display
+# From '--new-display=1920x1080'
+SCRCPY_ASPECT_RATIO = 16.0 / 9.0
 
 # --- Global Stylesheet ---
 GLOBAL_STYLESHEET = """
@@ -148,33 +151,96 @@ QDialog QLabel {
 """
 
 
-# --- OverlayWidget Class (As provided by user) ---
+# --- Keymap Class ---
+class Keymap:
+    """
+    Represents a single keymap with its visual properties and associated key combination.
+    """
+
+    def __init__(self, size: tuple, keycombo: list, position: tuple, type: str = "circle"):
+        """
+        Initialize a Keymap object.
+
+        Args:
+            size (tuple): A tuple (width, height) representing the bounding box size of the keymap.
+            keycombo (list): A list of Qt.Key values (integers) representing the key combination.
+            position (tuple): A tuple (x, y) representing the top-left position relative to the overlay.
+            type (str): The type of visual element for the keymap (e.g., "circle", "rectangle", "text").
+        """
+        self.size = QSize(size[0], size[1])
+        self.keycombo = keycombo
+        self.position = QPoint(position[0], position[1])
+        self.type = type
+
+
+# --- OverlayWidget Class ---
 class OverlayWidget(QWidget):
-    def __init__(self, parent=None):
+    def __init__(self, keymaps: list = None, parent=None):
         super().__init__(parent)
         self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.BypassWindowManagerHint)
-        self.setFocusPolicy(Qt.NoFocus)
+        # Using Qt.FramelessWindowHint and Qt.Tool as requested.
+        # Qt.Tool ensures it's a floating toolbar-like window that doesn't show in the taskbar.
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.Tool)
+        self.setFocusPolicy(Qt.NoFocus)  # Ensures it doesn't steal focus from Scrcpy
+        self.keymaps = keymaps if keymaps is not None else []
+
+    def _get_key_text(self, qt_key_code: int) -> str:
+        """Converts a Qt.Key code to its string representation for display."""
+        if qt_key_code == Qt.Key_Shift:
+            return "S"
+        elif qt_key_code == Qt.Key_Control:
+            return "C"
+        elif qt_key_code == Qt.Key_Alt:
+            return "A"
+        # For other keys, use QKeySequence to get the standard string
+        # QKeySequence(qt_key_code).toString() will return "Shift", "Control", "Alt" for modifiers too,
+        # but we handle them explicitly for single-letter display.
+        return QKeySequence(qt_key_code).toString()
 
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         painter.setRenderHint(QPainter.TextAntialiasing)
 
-        taskbar_height = 50
-        taskbar_rect = QRectF(0, 0, self.width(), taskbar_height)
-        taskbar_color = QColor(30, 30, 30, 150)
-        painter.fillRect(taskbar_rect, taskbar_color)
-        painter.setPen(QColor(255, 255, 255))
-        painter.drawText(10, 30, "Overlay Controls Here")
+        # Draw a semi-transparent taskbar-like area at the top of the overlay
 
-        circle_radius = 50
-        circle_center_x = self.width() // 2
-        circle_center_y = self.height() // 2
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor(255, 0, 0, 120))
-        painter.drawEllipse(circle_center_x - circle_radius, circle_center_y - circle_radius,
-                            circle_radius * 2, circle_radius * 2)
+        for keymap in self.keymaps:
+            # Calculate the bounding rectangle for the keymap element
+            keymap_rect = QRectF(keymap.position.x(), keymap.position.y(),
+                                 keymap.size.width(), keymap.size.height())
+
+            if keymap.type == "circle":
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(QColor(255, 0, 0, 120))  # Red, 120 alpha
+                painter.drawEllipse(keymap_rect)  # Draw ellipse using the keymap's rect
+
+                # Prepare and draw text for the key combination
+                key_texts = [self._get_key_text(kc) for kc in keymap.keycombo]
+                display_text = "+".join(key_texts)
+
+                # Dynamically adjust font size to fit text within the keymap rectangle
+                font = painter.font()
+                font.setFamily("Inter")  # Use a clean, readable font
+                max_font_size = 72  # Start with a large font size
+                min_font_size = 6  # Minimum readable font size
+
+                # Iterate downwards to find the largest font size that fits
+                for font_size in range(max_font_size, min_font_size - 1, -1):
+                    font.setPointSize(font_size)
+                    painter.setFont(font)
+                    metrics = QFontMetrics(font)
+                    text_bounding_rect = metrics.boundingRect(display_text)
+
+                    # Check if text fits within the keymap_rect with some padding
+                    if text_bounding_rect.width() <= keymap_rect.width() * 0.9 and \
+                            text_bounding_rect.height() <= keymap_rect.height() * 0.9:
+                        break  # Found a font size that fits
+
+                painter.setPen(QColor(255, 255, 255))  # White text for key combo
+                # Draw text centered in the keymap's rectangle using alignment flags
+                painter.drawText(keymap_rect, Qt.AlignCenter, display_text)
+
+            # Add other keymap types here as needed (e.g., "rectangle", "text")
         painter.end()
 
 
@@ -183,52 +249,45 @@ class CustomTitleBar(QWidget):
     def __init__(self, parent):
         super().__init__(parent)
         self.parent_window = parent
-        self.setObjectName("TitleBar")  # For stylesheet targeting
+        self.setObjectName("TitleBar")
 
-        self.setFixedHeight(35)  # Standard height for title bars
+        self.setFixedHeight(35)
 
         self.layout = QHBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
         self.layout.setSpacing(0)
 
-        # App Icon/Title
-        self.app_icon = QLabel("Bonito")  # Using an emoji as a placeholder icon
+        self.app_icon = QLabel("Bonito")
         self.app_icon.setFont(QFont("Inter", 16))
         self.layout.addWidget(self.app_icon)
 
         self.layout.addSpacerItem(QSpacerItem(40, 20, QSizePolicy.Expanding, QSizePolicy.Minimum))
 
-        # Extra button (optional, as per request)
-        self.extra_button = QPushButton("🏠")  # Home icon
+        self.extra_button = QPushButton("🏠")
         self.extra_button.setObjectName("ExtraButton")
-        self.extra_button.clicked.connect(lambda: print("Extra button clicked"))  # Debug print
+        self.extra_button.clicked.connect(lambda: print("Extra button clicked"))
         self.layout.addWidget(self.extra_button)
 
-        # Window control buttons
-        self.min_button = QPushButton("─")  # Minimize icon
+        self.min_button = QPushButton("─")
         self.min_button.setObjectName("MinimizeButton")
         self.min_button.clicked.connect(self.parent_window.showMinimized)
-        self.min_button.clicked.connect(lambda: print("Minimize button clicked"))  # Debug print
         self.layout.addWidget(self.min_button)
 
-        self.max_button = QPushButton("⬜")  # Maximize/Restore icon (will change based on state)
+        self.max_button = QPushButton("⬜")
         self.max_button.setObjectName("MaximizeButton")
-        self.max_button.clicked.connect(self.parent_window.toggle_maximize_restore)  # Connect to parent's method
-        self.max_button.clicked.connect(lambda: print("Maximize/Restore button clicked"))  # Debug print
+        self.max_button.clicked.connect(self.parent_window.toggle_maximize_restore)
         self.layout.addWidget(self.max_button)
 
-        self.close_button = QPushButton("✕")  # Close icon
+        self.close_button = QPushButton("✕")
         self.close_button.setObjectName("CloseButton")
         self.close_button.clicked.connect(self.parent_window.close)
-        self.close_button.clicked.connect(lambda: print("Close button clicked"))  # Debug print
         self.layout.addWidget(self.close_button)
-
 
 
 # --- Sidebar Widget Class ---
 class SidebarWidget(QFrame):
     settings_requested = pyqtSignal()
-    instance_selected = pyqtSignal(int)  # Emits the index of the instance/page
+    instance_selected = pyqtSignal(int)
 
     def __init__(self, num_instances: int = 5, parent=None):
         super().__init__(parent)
@@ -240,7 +299,7 @@ class SidebarWidget(QFrame):
         self.sidebar_layout.setSpacing(10)
 
         for i in range(num_instances):
-            btn = QPushButton(f"💬")  # Chat icon placeholder
+            btn = QPushButton(f"💬")
             btn.setObjectName("SidebarButton")
             btn.clicked.connect(lambda _, index=i: self._on_instance_button_clicked(index))
             self.sidebar_layout.addWidget(btn)
@@ -249,7 +308,7 @@ class SidebarWidget(QFrame):
             QSpacerItem(20, 40, QSizePolicy.Minimum, QSizePolicy.Expanding)
         )
 
-        self.settings_button = QPushButton("⚙️")  # Gear icon
+        self.settings_button = QPushButton("⚙️")
         self.settings_button.setObjectName("SettingsButton")
         self.settings_button.clicked.connect(self.settings_requested.emit)
         self.sidebar_layout.addWidget(self.settings_button)
@@ -313,7 +372,7 @@ class SideGrip(QWidget):
         self.mousePos = None
 
 
-# --- Main Content Area Widget Class (Revised with explicit win32gui.MoveWindow and eventFilter) ---
+# --- Main Content Area Widget Class ---
 class MainContentAreaWidget(QWidget):
     def __init__(self, instance_id: int, device_serial: str = None, parent=None):
         super().__init__(parent)
@@ -323,7 +382,7 @@ class MainContentAreaWidget(QWidget):
         self.scrcpy_process = None
         self.scrcpy_hwnd = None
         self.scrcpy_qwindow = None
-        self.scrcpy_container_widget = None
+        self.scrcpy_container_widget = None  # This is the QWidget created by createWindowContainer
 
         self.scrcpy_expected_title = f"{SCRCPY_WINDOW_TITLE_BASE}_{self.instance_id}"
 
@@ -341,7 +400,7 @@ class MainContentAreaWidget(QWidget):
         self.main_content_layout.addWidget(self.placeholder_label)
 
         self.start_scrcpy()
-        self.installEventFilter(self)  # Install event filter on THIS WIDGET
+        self.installEventFilter(self)  # Install event filter on THIS WIDGET to catch its own resizes
 
     def start_scrcpy(self):
         if self.scrcpy_process and self.scrcpy_process.poll() is None:
@@ -356,9 +415,10 @@ class MainContentAreaWidget(QWidget):
                 '--max-fps=60',
                 '--tcpip=192.168.1.38',
                 '-S',
-                '--new-display=1920x1080',
+                '--new-display=1920x1080',  # This sets the internal rendering resolution
                 '--start-app=com.ankama.dofustouch',
                 f'--window-title={self.scrcpy_expected_title}',
+                # '--window-borderless' was removed based on previous findings
             ]
 
             self.scrcpy_process = subprocess.Popen(
@@ -412,6 +472,7 @@ class MainContentAreaWidget(QWidget):
 
             # Explicitly call resize after embedding to ensure initial correct sizing
             self.resize_scrcpy_native_window()
+            # Overlay is now handled globally by MyQtApp, so no call here.
 
         else:
             print(
@@ -423,7 +484,8 @@ class MainContentAreaWidget(QWidget):
         # because its layout manages the scrcpy_container_widget's size.
         if source == self and event.type() == QEvent.Resize:
             self.resize_scrcpy_native_window()
-            print("resizing native")
+            # Overlay is now handled globally by MyQtApp, so no call here.
+            print("resizing native (MainContentAreaWidget)")
             return True
         return super().eventFilter(source, event)
 
@@ -436,16 +498,9 @@ class MainContentAreaWidget(QWidget):
         height = container_rect.height()
 
         try:
-            # Explicitly move and resize the native HWND
             win32gui.MoveWindow(self.scrcpy_hwnd, 0, 0, width, height, True)
             print(
                 f"Scrcpy window {self.scrcpy_hwnd} (Instance {self.instance_id + 1}) forced resize to: {width}x{height}")
-            # Optional: Verify actual dimensions after move
-            # left, top, right, bottom = win32gui.GetWindowRect(self.scrcpy_hwnd)
-            # actual_width = right - left
-            # actual_height = bottom - top
-            # print(f"Actual size reported by Windows: {actual_width}x{actual_height}.")
-
         except Exception as e:
             print(f"Error resizing scrcpy_hwnd: {e}")
 
@@ -454,11 +509,13 @@ class MainContentAreaWidget(QWidget):
         if self.scrcpy_hwnd:
             win32gui.ShowWindow(self.scrcpy_hwnd, win32con.SW_SHOW)
             self.resize_scrcpy_native_window()
+        # MyQtApp will handle showing/hiding/positioning the global overlay
 
     def hideEvent(self, event):
         super().hideEvent(event)
         if self.scrcpy_hwnd:
             win32gui.ShowWindow(self.scrcpy_hwnd, win32con.SW_HIDE)
+        # MyQtApp will handle showing/hiding/positioning the global overlay
 
     def stop_scrcpy(self):
         if self.scrcpy_process and self.scrcpy_process.poll() is None:
@@ -466,7 +523,7 @@ class MainContentAreaWidget(QWidget):
 
             if self.scrcpy_hwnd:
                 win32gui.ShowWindow(self.scrcpy_hwnd, win32con.SW_HIDE)
-                win32gui.SetParent(self.scrcpy_hwnd, 0)
+                win32gui.SetParent(self.scrcpy_hwnd, 0)  # Unparent before terminating
 
             self.scrcpy_process.terminate()
             try:
@@ -487,13 +544,13 @@ class MainContentAreaWidget(QWidget):
             self.scrcpy_container_widget = None
 
 
-# --- Main Application Window ---
+# --- Main Application Window (MODIFIED to manage a global OverlayWidget) ---
 class MyQtApp(QMainWindow):
     _gripSize = 8
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Lindo Integrated Controller")
+        self.setWindowTitle("Bonito Integrated Controller")
         self.setGeometry(100, 100, 1200, 800)
         self.setWindowFlags(Qt.FramelessWindowHint)
 
@@ -511,7 +568,7 @@ class MyQtApp(QMainWindow):
         self._moving = False
         self._drag_position = None
         self._resize_mode = None
-        self.setMouseTracking(True)
+        self.setMouseTracking(True)  # Enable mouse tracking for border detection
 
         self.main_widget = QWidget()
         self.setCentralWidget(self.main_widget)
@@ -552,6 +609,16 @@ class MyQtApp(QMainWindow):
             print("MyQtApp: Initial MainContentAreaWidget set to index 0.")
 
         self.update_max_restore_button()
+
+        # --- Global OverlayWidget Initialization ---
+        # Define the initial keymap for the red circle with Shift+A
+        # Position (50, 50) means 50 pixels from the top-left of the overlay itself
+        initial_keymap_circle = Keymap(size=(100, 100), keycombo=[Qt.Key_Shift, Qt.Key_A], position=(50, 50),
+                                       type="circle")
+        secondary_keymap_circle = Keymap(size=(100, 100), keycombo=[Qt.Key_A], position=(400, 300),
+                                       type="circle")
+        self.global_overlay = OverlayWidget(keymaps=[initial_keymap_circle, secondary_keymap_circle], parent=self)  # Pass the keymap list
+        self.global_overlay.hide()  # Initially hidden
 
     @property
     def gripSize(self):
@@ -594,6 +661,8 @@ class MyQtApp(QMainWindow):
         QMainWindow.resizeEvent(self, event)
         self.updateGrips()
         self.update_max_restore_button()
+        # Update the global overlay's geometry when the main window resizes
+        self.update_global_overlay_geometry()
 
     def _get_resize_mode(self, pos: QPoint):
         x, y = pos.x(), pos.y()
@@ -658,10 +727,14 @@ class MyQtApp(QMainWindow):
             self.setGeometry(new_rect.normalized())
             self._drag_position = event.globalPos()
             event.accept()
+            # Update overlay position during drag/resize
+            self.update_global_overlay_geometry()
 
         elif self._moving:
             self.move(event.globalPos() - self._drag_position)
             event.accept()
+            # Update overlay position during drag/move
+            self.update_global_overlay_geometry()
 
         else:
             mode = self._get_resize_mode(event.pos())
@@ -684,6 +757,8 @@ class MyQtApp(QMainWindow):
         self._resize_mode = None
         self.unsetCursor()
         super().mouseReleaseEvent(event)
+        # Ensure final update after release
+        self.update_global_overlay_geometry()
 
     def mouseDoubleClickEvent(self, event):
         if event.button() == Qt.LeftButton and self.title_bar.geometry().contains(event.pos()):
@@ -698,6 +773,8 @@ class MyQtApp(QMainWindow):
         else:
             self.showMaximized()
         self.update_max_restore_button()
+        # Update overlay geometry after maximize/restore
+        self.update_global_overlay_geometry()
 
     def leaveEvent(self, event):
         if not self._resizing and not self._moving:
@@ -731,27 +808,86 @@ class MyQtApp(QMainWindow):
         super().showEvent(event)
         self.update_max_restore_button()
         self.updateGrips()
+        # Ensure global overlay is positioned and shown correctly on app startup
+        self.update_global_overlay_geometry()
 
     def _on_stacked_widget_page_changed(self, index: int):
         print(f"Stacked widget page changed to index: {index}")
-        current_page = self.stacked_widget.widget(index)
+        # When changing pages, ensure correct visibility and geometry for Scrcpy and its overlay
         for i, page in enumerate(self.main_content_pages):
             if page.scrcpy_hwnd:
                 if i == index:
                     win32gui.ShowWindow(page.scrcpy_hwnd, win32con.SW_SHOW)
-                    # Crucially, force resize when the page becomes active
                     page.resize_scrcpy_native_window()
                 else:
                     win32gui.ShowWindow(page.scrcpy_hwnd, win32con.SW_HIDE)
+        # Always update the global overlay after a page change
+        self.update_global_overlay_geometry()
+
+    def update_global_overlay_geometry(self):
+        """
+        Calculates the global geometry of the current Scrcpy display area
+        and sets the global_overlay's geometry to match it, maintaining aspect ratio.
+        """
+        current_page = self.stacked_widget.currentWidget()
+
+        if current_page and hasattr(current_page, 'scrcpy_container_widget') and current_page.scrcpy_container_widget:
+            # Get the global position of the Scrcpy container widget
+            global_pos = current_page.scrcpy_container_widget.mapToGlobal(QPoint(0, 0))
+            # Get the size of the Scrcpy container widget (this is the available space)
+            available_width = current_page.scrcpy_container_widget.width()
+            available_height = current_page.scrcpy_container_widget.height()
+
+            # Calculate the dimensions that maintain the aspect ratio and fit within the available space
+            # Option 1: Maximize width, calculate height
+            target_width_by_width = available_width
+            target_height_by_width = int(available_width / SCRCPY_ASPECT_RATIO)
+
+            # Option 2: Maximize height, calculate width
+            target_height_by_height = available_height
+            target_width_by_height = int(available_height * SCRCPY_ASPECT_RATIO)
+
+            # Choose the option that fits without exceeding bounds
+            if target_height_by_width <= available_height:
+                # Option 1 fits vertically, so use it
+                overlay_target_width = target_width_by_width
+                overlay_target_height = target_height_by_width
+            else:
+                # Option 1 exceeds vertically, so use Option 2
+                overlay_target_width = target_width_by_height
+                overlay_target_height = target_height_by_height
+
+            # Calculate centered position within the container widget's global rectangle
+            overlay_x = global_pos.x() + (available_width - overlay_target_width) // 2
+            overlay_y = global_pos.y() + (available_height - overlay_target_height) // 2
+
+            self.global_overlay.setGeometry(
+                overlay_x, overlay_y, overlay_target_width, overlay_target_height
+            )
+            self.global_overlay.raise_()  # Ensure it's on top of all other windows
+            self.global_overlay.show()
+            print(
+                f"Global overlay positioned at ({overlay_x},{overlay_y}) with size {overlay_target_width}x{overlay_target_height}")
+        else:
+            # If no Scrcpy page is active or ready, hide the overlay
+            self.global_overlay.hide()
+            print("Global overlay hidden (no active Scrcpy page).")
 
     def closeEvent(self, event):
         print("Closing application, stopping all Scrcpy processes...")
+        # Hide the global overlay explicitly before closing
+        self.global_overlay.hide()
+        # It's good practice to close/delete the overlay if it's a top-level window
+        # when the main application closes to ensure all resources are released.
+        self.global_overlay.deleteLater()
+
         for page in self.main_content_pages:
             page.stop_scrcpy()
         super().closeEvent(event)
 
     def open_settings_dialog(self):
         print("Opening settings dialog...")
+        # SettingsDialog is now imported from settings_dialog.py
         settings_dialog = SettingsDialog(self)
         settings_dialog.exec_()
 
