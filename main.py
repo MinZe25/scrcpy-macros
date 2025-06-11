@@ -3,14 +3,15 @@ import subprocess
 import win32gui
 import win32con
 import time
+import math  # Import math for sqrt if .norm() is not available
 
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QFrame, QSizePolicy, QSpacerItem, QDialog,
     QStackedWidget, QSizeGrip
 )
-from PyQt5.QtGui import QPainter, QColor, QFont, QFontMetrics, QCursor, QWindow, QKeySequence
-from PyQt5.QtCore import Qt, QRect, QPoint, QRectF, QSize, QTimer, pyqtSignal, QEvent
+from PyQt5.QtGui import QPainter, QColor, QFont, QFontMetrics, QCursor, QWindow, QKeySequence, QMouseEvent, QKeyEvent
+from PyQt5.QtCore import Qt, QRect, QPoint, QRectF, QSize, QTimer, pyqtSignal, QEvent, QPointF, QSizeF
 
 # Assuming settings_dialog.py exists in the same directory
 from settings_dialog import SettingsDialog
@@ -155,21 +156,22 @@ QDialog QLabel {
 class Keymap:
     """
     Represents a single keymap with its visual properties and associated key combination.
+    Stores position and size as normalized floats (0.0 to 1.0).
     """
 
-    def __init__(self, size: tuple, keycombo: list, position: tuple, type: str = "circle"):
+    def __init__(self, normalized_size: tuple, keycombo: list, normalized_position: tuple, type: str = "circle"):
         """
         Initialize a Keymap object.
 
         Args:
-            size (tuple): A tuple (width, height) representing the bounding box size of the keymap.
+            normalized_size (tuple): A tuple (normalized_width, normalized_height) floats (0.0-1.0).
             keycombo (list): A list of Qt.Key values (integers) representing the key combination.
-            position (tuple): A tuple (x, y) representing the top-left position relative to the overlay.
+            normalized_position (tuple): A tuple (normalized_x, normalized_y) floats (0.0-1.0).
             type (str): The type of visual element for the keymap (e.g., "circle", "rectangle", "text").
         """
-        self.size = QSize(size[0], size[1])
+        self.normalized_size = QSizeF(normalized_size[0], normalized_size[1])
         self.keycombo = keycombo
-        self.position = QPoint(position[0], position[1])
+        self.normalized_position = QPointF(normalized_position[0], normalized_position[1])
         self.type = type
 
 
@@ -178,11 +180,20 @@ class OverlayWidget(QWidget):
     def __init__(self, keymaps: list = None, parent=None):
         super().__init__(parent)
         self.setAttribute(Qt.WA_TranslucentBackground)
-        # Using Qt.FramelessWindowHint and Qt.Tool as requested.
-        # Qt.Tool ensures it's a floating toolbar-like window that doesn't show in the taskbar.
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Tool)
-        self.setFocusPolicy(Qt.NoFocus)  # Ensures it doesn't steal focus from Scrcpy
+        self.setFocusPolicy(Qt.NoFocus)  # Default: No focus, events pass through
         self.keymaps = keymaps if keymaps is not None else []
+
+        self.edit_mode_active = False
+        self._dragging_keymap = None
+        self._creating_keymap = False
+        self._drag_start_pos_local = QPoint()  # Stores the QPoint of mousePressEvent (pixel)
+        self._keymap_original_pixel_pos = QPoint()  # Original pixel position of keymap when drag starts
+        self._selected_keymap_for_combo_edit = None
+        self._pending_modifier_key = None  # To handle Shift+A, Ctrl+B etc.
+
+        # Enable mouse tracking to show appropriate cursor in edit mode
+        self.setMouseTracking(True)
 
     def _get_key_text(self, qt_key_code: int) -> str:
         """Converts a Qt.Key code to its string representation for display."""
@@ -193,9 +204,28 @@ class OverlayWidget(QWidget):
         elif qt_key_code == Qt.Key_Alt:
             return "A"
         # For other keys, use QKeySequence to get the standard string
-        # QKeySequence(qt_key_code).toString() will return "Shift", "Control", "Alt" for modifiers too,
-        # but we handle them explicitly for single-letter display.
         return QKeySequence(qt_key_code).toString()
+
+    def set_edit_mode(self, active: bool):
+        """Activates or deactivates the keymap editing mode."""
+        self.edit_mode_active = active
+        # Make the overlay transparent to mouse events when not in edit mode,
+        # so clicks go through to the Scrcpy window.
+        # When active, it should capture mouse events.
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, not active)
+
+        # Set focus policy to allow key events when in edit mode
+        self.setFocusPolicy(Qt.StrongFocus if active else Qt.NoFocus)
+
+        if not active:
+            # Clear any active editing states when leaving edit mode
+            self._dragging_keymap = None
+            self._creating_keymap = False
+            self._selected_keymap_for_combo_edit = None
+            self._pending_modifier_key = None
+            self.unsetCursor()  # Reset cursor
+
+        self.update()  # Request repaint to show/hide grid
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -203,11 +233,45 @@ class OverlayWidget(QWidget):
         painter.setRenderHint(QPainter.TextAntialiasing)
 
         # Draw a semi-transparent taskbar-like area at the top of the overlay
+        taskbar_height = 50
+        taskbar_rect = QRectF(0, 0, self.width(), taskbar_height)
+        taskbar_color = QColor(30, 30, 30, 150)  # Dark grey, 150 alpha
+        painter.fillRect(taskbar_rect, taskbar_color)
+        painter.setPen(QColor(255, 255, 255))  # White text
+        painter.drawText(10, 30, "Overlay Controls Here")
+
+        # Draw semi-transparent background if in edit mode
+        if self.edit_mode_active:
+            painter.setBrush(QColor(0, 0, 0, 60))  # Black with 60 alpha (more transparent)
+            painter.setPen(Qt.NoPen)
+            painter.drawRect(self.rect())  # Cover the entire widget
+
+            grid_size = 50  # Size of each grid cell
+            painter.setPen(QColor(100, 100, 100, 80))  # Light grey, semi-transparent
+            for x in range(0, self.width(), grid_size):
+                painter.drawLine(x, 0, x, self.height())
+            for y in range(0, self.height(), grid_size):
+                painter.drawLine(0, y, self.width(), y)
 
         for keymap in self.keymaps:
-            # Calculate the bounding rectangle for the keymap element
-            keymap_rect = QRectF(keymap.position.x(), keymap.position.y(),
-                                 keymap.size.width(), keymap.size.height())
+            # Convert normalized position and size to pixel coordinates
+            pixel_x = keymap.normalized_position.x() * self.width()
+            pixel_y = keymap.normalized_position.y() * self.height()
+            pixel_width = keymap.normalized_size.width() * self.width()
+            pixel_height = keymap.normalized_size.height() * self.height()
+
+            keymap_rect = QRectF(pixel_x, pixel_y, pixel_width, pixel_height)
+
+            # Highlight selected keymap in edit mode
+            if self.edit_mode_active and keymap == self._selected_keymap_for_combo_edit:
+                painter.setPen(QColor(255, 255, 0))  # Yellow highlight
+                painter.setBrush(QColor(255, 255, 0, 50))  # Light yellow fill
+                painter.drawRoundedRect(keymap_rect.adjusted(-5, -5, 5, 5), 5,
+                                        5)  # Draw a slightly larger, rounded highlight
+            elif self.edit_mode_active and keymap == self._dragging_keymap:
+                painter.setPen(QColor(0, 255, 255))  # Cyan highlight for dragging
+                painter.setBrush(QColor(0, 255, 255, 50))
+                painter.drawRoundedRect(keymap_rect.adjusted(-3, -3, 3, 3), 3, 3)
 
             if keymap.type == "circle":
                 painter.setPen(Qt.NoPen)
@@ -216,7 +280,7 @@ class OverlayWidget(QWidget):
 
                 # Prepare and draw text for the key combination
                 key_texts = [self._get_key_text(kc) for kc in keymap.keycombo]
-                display_text = "+".join(key_texts)
+                display_text = "+".join(key_texts) if key_texts else "KEY"  # Default text if no key is set
 
                 # Dynamically adjust font size to fit text within the keymap rectangle
                 font = painter.font()
@@ -243,6 +307,188 @@ class OverlayWidget(QWidget):
             # Add other keymap types here as needed (e.g., "rectangle", "text")
         painter.end()
 
+    def mousePressEvent(self, event: QMouseEvent):
+        if not self.edit_mode_active:
+            super().mousePressEvent(event)
+            return
+
+        if event.button() == Qt.LeftButton:
+            self._drag_start_pos_local = event.pos()  # Pixel position
+            self._selected_keymap_for_combo_edit = None  # Clear any previous selection
+
+            clicked_on_existing_keymap = False
+            # Check if an existing keymap was clicked (using current pixel positions)
+            for keymap in self.keymaps:
+                pixel_x = keymap.normalized_position.x() * self.width()
+                pixel_y = keymap.normalized_position.y() * self.height()
+                pixel_width = keymap.normalized_size.width() * self.width()
+                pixel_height = keymap.normalized_size.height() * self.height()
+
+                keymap_rect = QRectF(pixel_x, pixel_y, pixel_width, pixel_height)
+
+                if keymap_rect.contains(event.pos()):
+                    self._dragging_keymap = keymap
+                    # Store original pixel position for dragging calculation
+                    self._keymap_original_pixel_pos = QPoint(int(pixel_x), int(pixel_y))
+                    clicked_on_existing_keymap = True
+                    break
+
+            if not clicked_on_existing_keymap:
+                # Clicked on empty space, start creating a new keymap.
+                # Temporarily store as normalized small size at click point, will be adjusted.
+                self._creating_keymap = True
+                new_keymap = Keymap(normalized_size=(0.01, 0.01),  # Small normalized size
+                                    keycombo=[],
+                                    normalized_position=(event.pos().x() / self.width(),
+                                                         event.pos().y() / self.height()))
+                self.keymaps.append(new_keymap)
+                self._dragging_keymap = new_keymap  # We are "dragging" this new one
+
+            self.update()  # Redraw for highlighting or new keymap outline
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QMouseEvent):
+        if not self.edit_mode_active:
+            super().mouseMoveEvent(event)
+            return
+
+        if self._dragging_keymap:
+            if self._creating_keymap:
+                # Calculate the current pixel rectangle for the new keymap
+                dx = event.pos().x() - self._drag_start_pos_local.x()
+                dy = event.pos().y() - self._drag_start_pos_local.y()
+                side_length = min(abs(dx), abs(dy))
+
+                current_pixel_x = self._drag_start_pos_local.x()
+                if dx < 0:
+                    current_pixel_x = self._drag_start_pos_local.x() - side_length
+
+                current_pixel_y = self._drag_start_pos_local.y()
+                if dy < 0:
+                    current_pixel_y = self._drag_start_pos_local.y() - side_length
+
+                # Update the normalized position and size of the temporary keymap
+                self._dragging_keymap.normalized_position = QPointF(current_pixel_x / self.width(),
+                                                                    current_pixel_y / self.height())
+                self._dragging_keymap.normalized_size = QSizeF(side_length / self.width(),
+                                                               side_length / self.height())
+
+                # Ensure minimum normalized size (e.g., 10 pixels minimum)
+                min_norm_size_w = 10 / self.width()
+                min_norm_size_h = 10 / self.height()
+                if self._dragging_keymap.normalized_size.width() < min_norm_size_w:
+                    self._dragging_keymap.normalized_size.setWidth(min_norm_size_w)
+                if self._dragging_keymap.normalized_size.height() < min_norm_size_h:
+                    self._dragging_keymap.normalized_size.setHeight(min_norm_size_h)
+
+            else:  # Moving existing keymap
+                delta = event.pos() - self._drag_start_pos_local
+                new_pixel_x = self._keymap_original_pixel_pos.x() + delta.x()
+                new_pixel_y = self._keymap_original_pixel_pos.y() + delta.y()
+
+                self._dragging_keymap.normalized_position = QPointF(new_pixel_x / self.width(),
+                                                                    new_pixel_y / self.height())
+            self.update()  # Redraw to show movement/resizing
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent):
+        if not self.edit_mode_active:
+            super().mouseReleaseEvent(event)
+            return
+
+        if event.button() == Qt.LeftButton:
+            release_pos = event.pos()
+
+            # Calculate distance moved to differentiate click from drag
+            try:
+                distance_moved = QPointF(release_pos - self._drag_start_pos_local).norm()
+            except AttributeError:
+                # Fallback for older PyQt5 versions if .norm() isn't present
+                dx = release_pos.x() - self._drag_start_pos_local.x()
+                dy = release_pos.y() - self._drag_start_pos_local.y()
+                distance_moved = math.sqrt(dx * dx + dy * dy)
+
+            if self._dragging_keymap:
+                if self._creating_keymap:
+                    # If it was a small click (not a significant drag) during creation, finalize as default size
+                    if distance_moved < 5:  # Threshold for a "click" vs "drag"
+                        # Remove the temporary keymap, as it was just a click
+                        self.keymaps.remove(self._dragging_keymap)
+
+                        # Create a new default-sized keymap centered at release position
+                        default_pixel_size = QSize(100, 100)  # Default size in pixels
+                        default_pixel_pos = QPoint(release_pos.x() - default_pixel_size.width() // 2,
+                                                   release_pos.y() - default_pixel_size.height() // 2)
+
+                        # Convert to normalized
+                        new_norm_x = default_pixel_pos.x() / self.width()
+                        new_norm_y = default_pixel_pos.y() / self.height()
+                        new_norm_size = default_pixel_size.width() / self.width()  # Square, so width = height
+
+                        new_keymap = Keymap(normalized_size=(new_norm_size, new_norm_size),
+                                            keycombo=[],
+                                            normalized_position=(new_norm_x, new_norm_y))
+                        self.keymaps.append(new_keymap)
+                        self._selected_keymap_for_combo_edit = new_keymap
+                    else:
+                        # For drag-to-size, finalize the current size and position to a perfect circle
+                        # The normalized position and size are already updated in mouseMoveEvent
+                        # We just need to select it.
+                        self._selected_keymap_for_combo_edit = self._dragging_keymap
+                else:
+                    # Existing keymap was dragged, check if it was truly a drag or a click
+                    if distance_moved < 5:
+                        self._selected_keymap_for_combo_edit = self._dragging_keymap
+
+                self._dragging_keymap = None  # Stop dragging
+                self._creating_keymap = False
+                self.update()  # Redraw after finalizing changes
+        super().mouseReleaseEvent(event)
+
+    def keyPressEvent(self, event: QKeyEvent):
+        if not self.edit_mode_active:
+            super().keyPressEvent(event)
+            return
+
+        # Handle deletion of selected keymap
+        if event.key() == Qt.Key_Delete and self._selected_keymap_for_combo_edit:
+            self.keymaps.remove(self._selected_keymap_for_combo_edit)
+            self._selected_keymap_for_combo_edit = None
+            self.update()
+            print("Keymap deleted.")
+            return
+
+        if self._selected_keymap_for_combo_edit:
+            key = event.key()
+            modifiers = event.modifiers()
+
+            new_combo = []
+
+            # Determine if a modifier key is pressed (Shift, Ctrl, Alt)
+            is_modifier_key = (key == Qt.Key_Shift or key == Qt.Key_Control or key == Qt.Key_Alt or
+                               key == Qt.Key_Meta or key == Qt.Key_Super_L or key == Qt.Key_Super_R)  # Add Super/Meta keys
+
+            # If a modifier key is pressed and it's the first key, store it.
+            # If a modifier key is pressed and there's already a pending modifier, update it.
+            if is_modifier_key:
+                self._pending_modifier_key = key
+                print(f"Pending modifier: {self._get_key_text(key)}")
+            # If a non-modifier key is pressed
+            else:
+                if self._pending_modifier_key:
+                    new_combo.append(self._pending_modifier_key)
+                    self._pending_modifier_key = None  # Clear pending modifier after adding it
+
+                # Add the current non-modifier key
+                new_combo.append(key)
+
+                self._selected_keymap_for_combo_edit.keycombo = new_combo
+                self._selected_keymap_for_combo_edit = None  # Deselect after setting combo
+                print(f"Keymap combo set to: {[self._get_key_text(k) for k in new_combo]}")
+                self.update()  # Redraw to show updated key combo
+        else:
+            super().keyPressEvent(event)  # Pass event if no keymap is selected for editing
+
 
 # --- Custom Title Bar Class ---
 class CustomTitleBar(QWidget):
@@ -263,10 +509,11 @@ class CustomTitleBar(QWidget):
 
         self.layout.addSpacerItem(QSpacerItem(40, 20, QSizePolicy.Expanding, QSizePolicy.Minimum))
 
-        self.extra_button = QPushButton("🏠")
-        self.extra_button.setObjectName("ExtraButton")
-        self.extra_button.clicked.connect(lambda: print("Extra button clicked"))
-        self.layout.addWidget(self.extra_button)
+        # Change button text and connect to new toggle method
+        self.edit_button = QPushButton("Edit")
+        self.edit_button.setObjectName("EditButton")  # Changed ID
+        self.edit_button.clicked.connect(self.parent_window.toggle_edit_mode)
+        self.layout.addWidget(self.edit_button)
 
         self.min_button = QPushButton("─")
         self.min_button.setObjectName("MinimizeButton")
@@ -416,9 +663,9 @@ class MainContentAreaWidget(QWidget):
                 '--tcpip=192.168.1.38',
                 '-S',
                 '--new-display=1920x1080',  # This sets the internal rendering resolution
-                '--start-app=com.ankama.dofustouch',
+                '--start-app=com.ankama.dofustouch',  # Re-added this line
                 f'--window-title={self.scrcpy_expected_title}',
-                # '--window-borderless' was removed based on previous findings
+                '--turn-screen-off'  # Turn off device screen to save battery
             ]
 
             self.scrcpy_process = subprocess.Popen(
@@ -569,6 +816,7 @@ class MyQtApp(QMainWindow):
         self._drag_position = None
         self._resize_mode = None
         self.setMouseTracking(True)  # Enable mouse tracking for border detection
+        self.edit_mode_active = False  # New state for edit mode
 
         self.main_widget = QWidget()
         self.setCentralWidget(self.main_widget)
@@ -611,14 +859,37 @@ class MyQtApp(QMainWindow):
         self.update_max_restore_button()
 
         # --- Global OverlayWidget Initialization ---
-        # Define the initial keymap for the red circle with Shift+A
-        # Position (50, 50) means 50 pixels from the top-left of the overlay itself
-        initial_keymap_circle = Keymap(size=(100, 100), keycombo=[Qt.Key_Shift, Qt.Key_A], position=(50, 50),
+        # Initialize keymaps with normalized coordinates
+        # These values are based on an assumed 1920x1080 internal resolution for Scrcpy
+        # and represent 50px offset and 100px size from that reference.
+        initial_keymap_circle = Keymap(normalized_size=(100 / 1920.0, 100 / 1080.0),
+                                       keycombo=[Qt.Key_Shift, Qt.Key_A],
+                                       normalized_position=(50 / 1920.0, 50 / 1080.0),
                                        type="circle")
-        secondary_keymap_circle = Keymap(size=(100, 100), keycombo=[Qt.Key_A], position=(400, 300),
-                                       type="circle")
-        self.global_overlay = OverlayWidget(keymaps=[initial_keymap_circle, secondary_keymap_circle], parent=self)  # Pass the keymap list
-        self.global_overlay.hide()  # Initially hidden
+        secondary_keymap_circle = Keymap(normalized_size=(100 / 1920.0, 100 / 1080.0),
+                                         keycombo=[Qt.Key_A],
+                                         normalized_position=(400 / 1920.0, 300 / 1080.0),
+                                         type="circle")
+        self.global_overlay = OverlayWidget(keymaps=[initial_keymap_circle, secondary_keymap_circle],
+                                            parent=self)
+        self.global_overlay.hide()
+
+    def toggle_edit_mode(self):
+        """Toggles the keymap editing mode."""
+        self.edit_mode_active = not self.edit_mode_active
+        self.global_overlay.set_edit_mode(self.edit_mode_active)
+        self.update_global_overlay_geometry()  # Recalculate to show/hide overlay as needed
+
+        # Update button text/style
+        if self.edit_mode_active:
+            self.title_bar.edit_button.setText("Exit Edit")
+            self.title_bar.edit_button.setStyleSheet(
+                "background-color: #BD93F9; color: #282a36;")  # Highlight when active
+        else:
+            self.title_bar.edit_button.setText("Edit")
+            self.title_bar.edit_button.setStyleSheet("")  # Reset to default style
+
+        print(f"Edit mode active: {self.edit_mode_active}")
 
     @property
     def gripSize(self):
@@ -661,8 +932,8 @@ class MyQtApp(QMainWindow):
         QMainWindow.resizeEvent(self, event)
         self.updateGrips()
         self.update_max_restore_button()
-        # Update the global overlay's geometry when the main window resizes
-        self.update_global_overlay_geometry()
+        # Defer updating the overlay's geometry to ensure layouts have settled
+        QTimer.singleShot(0, self.update_global_overlay_geometry)
 
     def _get_resize_mode(self, pos: QPoint):
         x, y = pos.x(), pos.y()
@@ -728,7 +999,7 @@ class MyQtApp(QMainWindow):
             self._drag_position = event.globalPos()
             event.accept()
             # Update overlay position during drag/resize
-            self.update_global_overlay_geometry()
+            # self.update_global_overlay_geometry() # Not here, done via QTimer in resizeEvent
 
         elif self._moving:
             self.move(event.globalPos() - self._drag_position)
@@ -828,10 +1099,13 @@ class MyQtApp(QMainWindow):
         """
         Calculates the global geometry of the current Scrcpy display area
         and sets the global_overlay's geometry to match it, maintaining aspect ratio.
+        The overlay is always shown if a Scrcpy page is active.
         """
         current_page = self.stacked_widget.currentWidget()
 
-        if current_page and hasattr(current_page, 'scrcpy_container_widget') and current_page.scrcpy_container_widget:
+        if current_page and \
+                hasattr(current_page, 'scrcpy_container_widget') and \
+                current_page.scrcpy_container_widget:
             # Get the global position of the Scrcpy container widget
             global_pos = current_page.scrcpy_container_widget.mapToGlobal(QPoint(0, 0))
             # Get the size of the Scrcpy container widget (this is the available space)
@@ -850,26 +1124,33 @@ class MyQtApp(QMainWindow):
             # Choose the option that fits without exceeding bounds
             if target_height_by_width <= available_height:
                 # Option 1 fits vertically, so use it
-                overlay_target_width = target_width_by_width
-                overlay_target_height = target_height_by_width
+                active_display_width = target_width_by_width
+                active_display_height = target_height_by_width
             else:
                 # Option 1 exceeds vertically, so use Option 2
-                overlay_target_width = target_width_by_height
-                overlay_target_height = target_height_by_height
+                active_display_width = target_width_by_height
+                active_display_height = target_height_by_height
 
             # Calculate centered position within the container widget's global rectangle
-            overlay_x = global_pos.x() + (available_width - overlay_target_width) // 2
-            overlay_y = global_pos.y() + (available_height - overlay_target_height) // 2
+            offset_x = (available_width - active_display_width) // 2
+            offset_y = (available_height - active_display_height) // 2
+
+            overlay_x = global_pos.x() + offset_x
+            overlay_y = global_pos.y() + offset_y
 
             self.global_overlay.setGeometry(
-                overlay_x, overlay_y, overlay_target_width, overlay_target_height
+                overlay_x, overlay_y, active_display_width, active_display_height
             )
             self.global_overlay.raise_()  # Ensure it's on top of all other windows
             self.global_overlay.show()
+
             print(
-                f"Global overlay positioned at ({overlay_x},{overlay_y}) with size {overlay_target_width}x{overlay_target_height}")
+                f"Overlay Geometry Set: x={overlay_x}, y={overlay_y}, w={active_display_width}, h={active_display_height}")
+            print(f"Scrcpy Container (Available): w={available_width}, h={available_height}")
+            print(f"Calculated Active Display: w={active_display_width}, h={active_display_height}")
+
         else:
-            # If no Scrcpy page is active or ready, hide the overlay
+            # If no Scrcpy page is active, hide the overlay
             self.global_overlay.hide()
             print("Global overlay hidden (no active Scrcpy page).")
 
