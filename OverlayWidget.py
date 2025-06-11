@@ -29,69 +29,107 @@ class OverlayWidget(QWidget):
         self.raise_()
 
     def mousePressEvent(self, event):
-        """Forward mouse press events to the parent application"""
-        # Pass the event to the parent if it exists and has a mousePressEvent method
-        parent = self.parent()
-        if parent and hasattr(parent, 'mousePressEvent'):
-            # Convert event position to parent's coordinate system
-            parent_pos = self.mapToParent(event.pos())
-            # Create a new QMouseEvent in the parent's coordinates
+        """Forward mouse press events to the main application"""
+        # Get the main application instance
+        from PyQt5.QtWidgets import QApplication
+        main_app = None
+        for widget in QApplication.topLevelWidgets():
+            if widget.__class__.__name__ == "ScrcpyIntegratedApp":
+                main_app = widget
+                break
+
+        if main_app and hasattr(main_app, 'mousePressEvent'):
+            # Create a new QMouseEvent in the main app's coordinates
+            # We need to map from global coordinates
+            global_pos = event.globalPos()
+            main_app_pos = main_app.mapFromGlobal(global_pos)
+
             new_event = QMouseEvent(
                 event.type(),
-                parent_pos,
+                main_app_pos,
                 event.button(),
                 event.buttons(),
                 event.modifiers()
             )
-            parent.mousePressEvent(new_event)
+            main_app.mousePressEvent(new_event)
         else:
             super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
-        """Forward mouse move events to the parent application"""
-        parent = self.parent()
-        if parent and hasattr(parent, 'mouseMoveEvent'):
-            parent_pos = self.mapToParent(event.pos())
+        """Forward mouse move events to the main application"""
+        from PyQt5.QtWidgets import QApplication
+        main_app = None
+        for widget in QApplication.topLevelWidgets():
+            if widget.__class__.__name__ == "ScrcpyIntegratedApp":
+                main_app = widget
+                break
+
+        if main_app and hasattr(main_app, 'mouseMoveEvent'):
+            # Create a new QMouseEvent in the main app's coordinates
+            global_pos = event.globalPos()
+            main_app_pos = main_app.mapFromGlobal(global_pos)
+
             new_event = QMouseEvent(
                 event.type(),
-                parent_pos,
+                main_app_pos,
                 event.button(),
                 event.buttons(),
                 event.modifiers()
             )
-            parent.mouseMoveEvent(new_event)
+            main_app.mouseMoveEvent(new_event)
         else:
             super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
-        """Forward mouse release events to the parent application"""
-        parent = self.parent()
-        if parent and hasattr(parent, 'mouseReleaseEvent'):
-            parent_pos = self.mapToParent(event.pos())
+        """Forward mouse release events to the main application"""
+        from PyQt5.QtWidgets import QApplication
+        main_app = None
+        for widget in QApplication.topLevelWidgets():
+            if widget.__class__.__name__ == "ScrcpyIntegratedApp":
+                main_app = widget
+                break
+
+        if main_app and hasattr(main_app, 'mouseReleaseEvent'):
+            # Create a new QMouseEvent in the main app's coordinates
+            global_pos = event.globalPos()
+            main_app_pos = main_app.mapFromGlobal(global_pos)
+
             new_event = QMouseEvent(
                 event.type(),
-                parent_pos,
+                main_app_pos,
                 event.button(),
                 event.buttons(),
                 event.modifiers()
             )
-            parent.mouseReleaseEvent(new_event)
+            main_app.mouseReleaseEvent(new_event)
         else:
             super().mouseReleaseEvent(event)
 
     def keyPressEvent(self, event):
-        """Forward key press events to the parent application"""
-        parent = self.parent()
-        if parent and hasattr(parent, 'keyPressEvent'):
-            parent.keyPressEvent(event)
+        """Forward key press events to the main application"""
+        from PyQt5.QtWidgets import QApplication
+        main_app = None
+        for widget in QApplication.topLevelWidgets():
+            if widget.__class__.__name__ == "ScrcpyIntegratedApp":
+                main_app = widget
+                break
+
+        if main_app and hasattr(main_app, 'keyPressEvent'):
+            main_app.keyPressEvent(event)
         else:
             super().keyPressEvent(event)
 
     def paintEvent(self, event):
-        # Get the ScrcpyIntegratedApp instance (parent)
-        main_app = self.parent()
+        # Get the ScrcpyIntegratedApp instance
+        from PyQt5.QtWidgets import QApplication
+        main_app = None
+        for widget in QApplication.topLevelWidgets():
+            if widget.__class__.__name__ == "ScrcpyIntegratedApp":
+                main_app = widget
+                break
+
         if not main_app:
-            print("No parent app found")
+            print("No main app found")
             return
 
         # Access DRAWING_PRIMITIVES and other variables from the main app

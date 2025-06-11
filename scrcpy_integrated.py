@@ -77,11 +77,11 @@ class ScrcpyIntegratedApp(QMainWindow):
         self.DRAWING_PRIMITIVES = DEFAULT_PRIMITIVES.copy()
         self.NEXT_PRIMITIVE_ID = NEXT_PRIMITIVE_ID
 
-        # Create the overlay widget but don't show it yet
+        # Create the overlay widget with no parent to make it a top-level window
         # We'll properly position it after creating the scrcpy_frame
-        self.drawing_overlay = OverlayWidget(self)
+        self.drawing_overlay = OverlayWidget()
         self.drawing_overlay.installEventFilter(self)  # Install event filter to monitor events
-        self.drawing_overlay.show()  # Explicitly show the overlay
+        # Don't show it yet - will be shown after positioning
         # Start scrcpy process
         self.start_scrcpy()
 
@@ -596,7 +596,7 @@ class ScrcpyIntegratedApp(QMainWindow):
                 self.update()
 
     def update_overlay_geometry(self):
-        """Position the overlay within the scrcpy_frame to make it an overlay layer"""
+        """Position the overlay to match the scrcpy_container without parenting it"""
         if not hasattr(self, 'drawing_overlay') or not self.scrcpy_frame:
             return
         print("Update overlay geometry")
@@ -606,14 +606,22 @@ class ScrcpyIntegratedApp(QMainWindow):
             print("Scrcpy container not visible, can't update overlay")
             return
 
-        # Set the overlay to fill the entire frame
         # Get the inner size of the frame (accounting for layout margins)
         frame_content_rect = self.scrcpy_layout.contentsRect()
 
-        # Resize the overlay to match the frame's content area exactly
-        self.drawing_overlay.setGeometry(0, 0, self.scrcpy_frame.width(), self.scrcpy_frame.height())
+        # Calculate the absolute screen position of the scrcpy container
+        container_global_pos = self.scrcpy_container.mapToGlobal(self.scrcpy_container.rect().topLeft())
+        container_size = self.scrcpy_container.size()
 
-        # Make sure it's visible and on top of other widgets in the scrcpy_frame
+        # Position the overlay at the same screen coordinates as the container
+        self.drawing_overlay.setGeometry(
+            container_global_pos.x(),
+            container_global_pos.y(),
+            container_size.width(),
+            container_size.height()
+        )
+
+        # Make sure it's visible and on top
         self.drawing_overlay.setVisible(True)
         self.drawing_overlay.show()
         self.drawing_overlay.raise_()
@@ -939,6 +947,10 @@ class ScrcpyIntegratedApp(QMainWindow):
         # Stop the console update timer
         if hasattr(self, 'console_timer'):
             self.console_timer.stop()
+
+        # Close the overlay window if it exists
+        if hasattr(self, 'drawing_overlay') and self.drawing_overlay:
+            self.drawing_overlay.close()
 
         # Kill the scrcpy process when closing the application
         if hasattr(self, 'scrcpy_process') and self.scrcpy_process:
