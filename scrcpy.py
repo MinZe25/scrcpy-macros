@@ -114,6 +114,7 @@ class OverlayWindow(QWidget):
         self.selected_primitive_id = None  # ID of selected primitive
         self.primitive_being_moved = False  # Flag to track if a primitive is being moved
         self.delete_button_size = 20  # Size of the delete X button
+        self.assigning_key_combo = False  # Flag to track if we're waiting for key combo
 
         # --- Edit Mode Button ---
         self.edit_button = QPushButton("Edit Mode", self)
@@ -342,7 +343,8 @@ class OverlayWindow(QWidget):
             'color': color,
             'opacity': opacity,
             'center_coords': center_coords,
-            'dimensions': dimensions
+            'dimensions': dimensions,
+            'key_combo': ""  # Initialize with no key combo
         }
         self.update()  # Request a repaint
 
@@ -392,6 +394,12 @@ class OverlayWindow(QWidget):
             distance = ((device_x - button_x) ** 2 + (device_y - button_y) ** 2) ** 0.5
             return distance <= self.delete_button_size / 2
 
+        return False
+
+    def is_key_combo_button_hit(self, device_x, device_y):
+        """This method is kept for backwards compatibility but no longer used"""
+        # Key combo assignment now happens automatically when a primitive is selected
+        # without requiring a separate button click
         return False
 
     def paintEvent(self, event):
@@ -456,7 +464,59 @@ class OverlayWindow(QWidget):
                 # drawEllipse takes center coordinates directly
                 painter.drawEllipse(QPoint(int(center_x), int(center_y)), int(radius), int(radius))
 
-                # Draw selection indicator and delete button for selected primitive in edit mode
+                # Draw key combo text if assigned (always visible, even outside edit mode)
+                key_combo = p_data.get('key_combo')
+                if key_combo:
+                    # Save current painter state
+                    painter.save()
+
+                    # Calculate size based on circle radius - make text as large as possible
+                    # Use radius as a scaling factor for the font size
+                    # Cap at reasonable sizes for very large or small circles
+                    font_size = min(max(int(radius * 0.6), 12), 48)  # Scale with radius but with min/max
+
+                    # Set up font for key combo
+                    font = painter.font()
+                    font.setPointSize(font_size)
+                    font.setBold(True)
+                    painter.setFont(font)
+
+                    # Draw the text directly in the center of the circle
+                    # First create a background that fills most of the circle
+                    bg_size = radius * 1.4  # Make background large, filling most of the circle
+                    bg_rect = QRectF(
+                        center_x - bg_size/2,
+                        center_y - bg_size/2,
+                        bg_size,
+                        bg_size
+                    )
+
+                    # Semi-transparent black background
+                    painter.setPen(Qt.NoPen)
+                    painter.setBrush(QColor(0, 0, 0, 180))
+                    painter.drawEllipse(bg_rect)  # Circular background
+
+                    # Add a white border for contrast
+                    painter.setPen(QPen(QColor(255, 255, 255, 200), 2))
+                    painter.setBrush(Qt.NoBrush)
+                    painter.drawEllipse(bg_rect)
+
+                    # Draw text with bright color
+                    painter.setPen(QPen(QColor(255, 255, 255, 255), 3))  # Solid white, thick
+
+                    # Use a slightly smaller rect for the text to ensure it fits
+                    text_rect = QRectF(
+                        center_x - bg_size/2 + 10,  # Inset from the background edge
+                        center_y - bg_size/2 + 10,
+                        bg_size - 20,
+                        bg_size - 20
+                    )
+                    painter.drawText(text_rect, Qt.AlignCenter, key_combo)
+
+                    # Restore painter state
+                    painter.restore()
+
+                # Draw selection indicator and buttons for selected primitive in edit mode
                 if self.edit_mode_active and p_id == self.selected_primitive_id:
                     # Draw a dashed selection outline
                     select_pen = QPen(Qt.white, 2, Qt.DashLine)
@@ -484,6 +544,15 @@ class OverlayWindow(QWidget):
                                     int(delete_x + x_size), int(delete_y + x_size))
                     painter.drawLine(int(delete_x + x_size), int(delete_y - x_size), 
                                     int(delete_x - x_size), int(delete_y + x_size))
+
+                    # Visual indicator for key combo assignment mode
+                    if self.assigning_key_combo and self.selected_primitive_id == p_id:
+                        # Draw an orange glow around the selected circle to indicate key combo assignment mode
+                        glow_pen = QPen(QColor(255, 165, 0, 180), 3, Qt.DashLine)
+                        painter.setPen(glow_pen)
+                        painter.setBrush(Qt.NoBrush)
+                        # Draw slightly larger than the selection circle
+                        painter.drawEllipse(QPoint(int(center_x), int(center_y)), int(radius) + 8, int(radius) + 8)
             elif p_type == 'crosshair':
                 line_length = dimensions
                 pen = QPen(color, 2)  # Use a pen for lines (line thickness 2)
@@ -531,6 +600,7 @@ class OverlayWindow(QWidget):
             painter.drawText(15 + shadow_offset, 120 + shadow_offset, "Click and drag to create circles")
             painter.drawText(15 + shadow_offset, 150 + shadow_offset, "Click on circle to select, then:")
             painter.drawText(15 + shadow_offset, 180 + shadow_offset, "- Drag to move, click X to delete")
+            painter.drawText(15 + shadow_offset, 210 + shadow_offset, "- Type keys to assign a shortcut (click elsewhere to cancel)")
 
             # Then draw the colored text on top
             painter.setPen(QPen(edit_text_color))
@@ -539,6 +609,7 @@ class OverlayWindow(QWidget):
             painter.drawText(15, 120, "Click and drag to create circles")
             painter.drawText(15, 150, "Click on circle to select, then:")
             painter.drawText(15, 180, "- Drag to move, click X to delete")
+            painter.drawText(15, 210, "- Type keys to assign a shortcut (click elsewhere to cancel)")
 
             # Draw an example of the current primitive type
             preview_color = QColor(*self.new_primitive_color)
@@ -604,6 +675,88 @@ class OverlayWindow(QWidget):
                 super().mousePressEvent(event)
                 return
 
+        # Check for clicking on primitives when not in edit mode to trigger key combos
+        if not self.edit_mode_active and event.button() == Qt.LeftButton:
+            # Calculate device coordinates (same as elsewhere in the code)
+            pos = event.pos()
+            current_overlay_width = self.width()
+            current_overlay_height = self.height()
+            scale_factor_x = current_overlay_width / self.device_width
+            scale_factor_y = current_overlay_height / self.device_height
+            actual_scale = min(scale_factor_x, scale_factor_y)
+            scaled_content_width = self.device_width * actual_scale
+            scaled_content_height = self.device_height * actual_scale
+            offset_x = (current_overlay_width - scaled_content_width) / 2
+            offset_y = (current_overlay_height - scaled_content_height) / 2
+
+            # Convert overlay position to device coordinates
+            device_x = (pos.x() - offset_x) / actual_scale
+            device_y = (pos.y() - offset_y) / actual_scale
+
+            # Check if we clicked on a primitive
+            clicked_primitive_id = self.find_primitive_at_coords(device_x, device_y)
+            if clicked_primitive_id and clicked_primitive_id in DRAWING_PRIMITIVES:
+                # Get the key combo for this primitive
+                key_combo = DRAWING_PRIMITIVES[clicked_primitive_id].get('key_combo')
+                if key_combo:
+                    print(f"Primitive clicked with key combo: {key_combo}")
+
+                    # Simulate the key combination by sending key events to the active window
+                    # For this example, we'll use win32 SendMessage to send keystrokes to scrcpy
+                    if self.scrcpy_hwnd:
+                        # Activate the scrcpy window first
+                        win32gui.SetForegroundWindow(self.scrcpy_hwnd)
+
+                        # Parse the key combo
+                        has_ctrl = 'Ctrl+' in key_combo
+                        has_alt = 'Alt+' in key_combo
+                        has_shift = 'Shift+' in key_combo
+
+                        # Extract the key part (after the last +)
+                        key_part = key_combo.split('+')[-1]
+
+                        # Press modifiers first if any
+                        if has_ctrl:
+                            win32gui.SendMessage(self.scrcpy_hwnd, win32con.WM_KEYDOWN, win32con.VK_CONTROL, 0)
+                        if has_alt:
+                            win32gui.SendMessage(self.scrcpy_hwnd, win32con.WM_KEYDOWN, win32con.VK_MENU, 0)
+                        if has_shift:
+                            win32gui.SendMessage(self.scrcpy_hwnd, win32con.WM_KEYDOWN, win32con.VK_SHIFT, 0)
+
+                        # Try to send the main key
+                        # This is a simplified approach - a full implementation would map all keys
+                        if len(key_part) == 1 and key_part.isalpha():
+                            vk_code = ord(key_part.upper())
+                            win32gui.SendMessage(self.scrcpy_hwnd, win32con.WM_KEYDOWN, vk_code, 0)
+                            win32gui.SendMessage(self.scrcpy_hwnd, win32con.WM_KEYUP, vk_code, 0)
+                        elif key_part == 'Esc':
+                            win32gui.SendMessage(self.scrcpy_hwnd, win32con.WM_KEYDOWN, win32con.VK_ESCAPE, 0)
+                            win32gui.SendMessage(self.scrcpy_hwnd, win32con.WM_KEYUP, win32con.VK_ESCAPE, 0)
+                        elif key_part == 'Tab':
+                            win32gui.SendMessage(self.scrcpy_hwnd, win32con.WM_KEYDOWN, win32con.VK_TAB, 0)
+                            win32gui.SendMessage(self.scrcpy_hwnd, win32con.WM_KEYUP, win32con.VK_TAB, 0)
+                        elif key_part == 'Enter':
+                            win32gui.SendMessage(self.scrcpy_hwnd, win32con.WM_KEYDOWN, win32con.VK_RETURN, 0)
+                            win32gui.SendMessage(self.scrcpy_hwnd, win32con.WM_KEYUP, win32con.VK_RETURN, 0)
+                        elif key_part == 'Delete':
+                            win32gui.SendMessage(self.scrcpy_hwnd, win32con.WM_KEYDOWN, win32con.VK_DELETE, 0)
+                            win32gui.SendMessage(self.scrcpy_hwnd, win32con.WM_KEYUP, win32con.VK_DELETE, 0)
+
+                        # Release modifiers in reverse order
+                        if has_shift:
+                            win32gui.SendMessage(self.scrcpy_hwnd, win32con.WM_KEYUP, win32con.VK_SHIFT, 0)
+                        if has_alt:
+                            win32gui.SendMessage(self.scrcpy_hwnd, win32con.WM_KEYUP, win32con.VK_MENU, 0)
+                        if has_ctrl:
+                            win32gui.SendMessage(self.scrcpy_hwnd, win32con.WM_KEYUP, win32con.VK_CONTROL, 0)
+
+                        # Return focus to overlay after sending keys
+                        self.activateWindow()
+                        self.raise_()
+
+                    event.accept()
+                    return
+
         if self.edit_mode_active and event.button() == Qt.LeftButton:
             # Ensure we have focus before proceeding with primitive creation
             if not self.hasFocus():
@@ -648,12 +801,18 @@ class OverlayWindow(QWidget):
                     self.update()
                     return
 
+                # Key combo button has been removed
+                # Assignment mode is now automatically enabled when a primitive is selected
+
                 # Then check if we clicked on an existing primitive
                 clicked_primitive_id = self.find_primitive_at_coords(device_x, device_y)
                 if clicked_primitive_id:
                     print(f"Selected existing primitive: {clicked_primitive_id}")
                     self.selected_primitive_id = clicked_primitive_id
                     self.primitive_being_moved = True
+                    # Enable key combo assignment when a primitive is selected
+                    self.assigning_key_combo = True
+                    print(f"Waiting for key combo for primitive {self.selected_primitive_id}")
                     # Update to show selection
                     self.update()
                     return
@@ -849,6 +1008,31 @@ class OverlayWindow(QWidget):
         # Clear the start point for all cases
         self.start_point = None
 
+        # Turn off key combo assignment mode if we released the mouse on empty space
+        # (This allows clicking away from a primitive to cancel key combo assignment)
+        if self.assigning_key_combo and not self.primitive_being_created and not self.primitive_being_moved:
+            pos = event.pos()
+            # Calculate device coordinates as in mousePressEvent
+            current_overlay_width = self.width()
+            current_overlay_height = self.height()
+            scale_factor_x = current_overlay_width / self.device_width
+            scale_factor_y = current_overlay_height / self.device_height
+            actual_scale = min(scale_factor_x, scale_factor_y)
+            scaled_content_width = self.device_width * actual_scale
+            scaled_content_height = self.device_height * actual_scale
+            offset_x = (current_overlay_width - scaled_content_width) / 2
+            offset_y = (current_overlay_height - scaled_content_height) / 2
+            device_x = (pos.x() - offset_x) / actual_scale
+            device_y = (pos.y() - offset_y) / actual_scale
+
+            # Check if we clicked on a primitive
+            clicked_primitive_id = self.find_primitive_at_coords(device_x, device_y)
+            if not clicked_primitive_id:
+                # Clicked on empty space, cancel key combo assignment
+                self.assigning_key_combo = False
+                print("Cancelled key combo assignment (clicked on empty space)")
+                self.update()
+
         # Make sure we keep focus
         self.activateWindow()
         self.setFocus()
@@ -907,6 +1091,52 @@ class OverlayWindow(QWidget):
                 self.update()
                 event.accept()
                 return
+
+            # Handle key combo assignment for selected primitive
+            elif self.assigning_key_combo and self.selected_primitive_id and self.selected_primitive_id in DRAWING_PRIMITIVES:
+                # Create a readable key combo string
+                modifiers = event.modifiers()
+                key_text = event.text()
+
+                # Build the key combination string
+                key_combo = ""
+                if modifiers & Qt.ControlModifier:
+                    key_combo += "Ctrl+"
+                if modifiers & Qt.AltModifier:
+                    key_combo += "Alt+"
+                if modifiers & Qt.ShiftModifier:
+                    key_combo += "Shift+"
+
+                # For special keys, use more readable names
+                key_name = ""
+                if key in (16777216, 16777217, 16777219, 16777220, 16777223):  # Esc, Tab, Backspace, Enter, Delete
+                    if key == 16777216:
+                        key_name = "Esc"
+                    elif key == 16777217:
+                        key_name = "Tab"
+                    elif key == 16777219:
+                        key_name = "Backspace"
+                    elif key == 16777220:
+                        key_name = "Enter"
+                    elif key == 16777223:
+                        key_name = "Delete"
+                # For regular printable characters, use the text
+                elif key_text and key_text.isprintable():
+                    key_name = key_text.upper()
+                # For other keys, use the key code
+                else:
+                    key_name = f"K{key}"
+
+                key_combo += key_name
+
+                # Assign the key combo to the primitive
+                if key_combo:
+                    DRAWING_PRIMITIVES[self.selected_primitive_id]['key_combo'] = key_combo
+                    print(f"Assigned key combo '{key_combo}' to primitive {self.selected_primitive_id}")
+                    self.assigning_key_combo = False  # Turn off assignment mode after successful assignment
+                    self.update()  # Redraw to show the key combo
+                    event.accept()
+                    return
 
         # Call the parent class implementation for other keys
         super().keyPressEvent(event)
@@ -981,6 +1211,7 @@ class OverlayWindow(QWidget):
             self.start_point = None
             self.selected_primitive_id = None
             self.primitive_being_moved = False
+            self.assigning_key_combo = False
 
         self.update()  # Repaint to reflect edit mode change
     # --- End Edit Mode Methods ---
@@ -1040,6 +1271,10 @@ if __name__ == "__main__":
     print("  - Click on a circle to select it")
     print("  - Drag a selected circle to move it")
     print("  - Click the X button on a selected circle to delete it")
+    print("  - When a circle is selected, type to assign a shortcut key to it")
+    print("  - Click elsewhere to cancel shortcut assignment")
+    print("  - Shortcut keys (with optional Ctrl, Alt, or Shift) are shown on circles")
+    print("  - Shortcuts remain visible even outside edit mode")
     print("\nTroubleshooting:")
     print("  - If keyboard shortcuts don't work, click on the overlay background to ensure it has focus")
     print("  - Make sure to click and drag within the actual device display area (not in black borders)")
