@@ -18,4 +18,3 @@ class SettingsDialog(QDialog):
         close_btn = QPushButton("Close", self)
         close_btn.clicked.connect(self.accept)
         layout.addWidget(close_btn)
-

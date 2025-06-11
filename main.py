@@ -4,6 +4,8 @@ import win32gui
 import win32con
 import time
 import math  # Import math for sqrt if .norm() is not available
+import json  # For serializing/deserializing keymap data
+import os  # For checking file existence
 
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -13,7 +15,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtGui import QPainter, QColor, QFont, QFontMetrics, QCursor, QWindow, QKeySequence, QMouseEvent, QKeyEvent
 from PyQt5.QtCore import Qt, QRect, QPoint, QRectF, QSize, QTimer, pyqtSignal, QEvent, QPointF, QSizeF
 
-# Assuming settings_dialog.py exists in the same directory
+# Assume settings_dialog.py exists in the same directory
 from settings_dialog import SettingsDialog
 
 # Constants for window resizing
@@ -33,6 +35,8 @@ SCRCPY_WINDOW_TITLE_BASE = "Lindo_Scrcpy_Instance"
 # Aspect ratio of the Scrcpy display
 # From '--new-display=1920x1080'
 SCRCPY_ASPECT_RATIO = 16.0 / 9.0
+
+KEYMAP_FILE = "keymaps.json"  # Local JSON file for keymap storage
 
 # --- Global Stylesheet ---
 GLOBAL_STYLESHEET = """
@@ -174,9 +178,30 @@ class Keymap:
         self.normalized_position = QPointF(normalized_position[0], normalized_position[1])
         self.type = type
 
+    def to_dict(self):
+        """Converts the Keymap object to a dictionary for JSON serialization."""
+        return {
+            "normalized_size": [self.normalized_size.width(), self.normalized_size.height()],
+            "keycombo": self.keycombo,
+            "normalized_position": [self.normalized_position.x(), self.normalized_position.y()],
+            "type": self.type
+        }
+
+    @staticmethod
+    def from_dict(data: dict):
+        """Creates a Keymap object from a dictionary."""
+        return Keymap(
+            normalized_size=tuple(data["normalized_size"]),
+            keycombo=data["keycombo"],
+            normalized_position=tuple(data["normalized_position"]),
+            type=data["type"]
+        )
+
 
 # --- OverlayWidget Class ---
 class OverlayWidget(QWidget):
+    keymaps_changed = pyqtSignal(list)  # Signal to notify parent of keymap changes
+
     def __init__(self, keymaps: list = None, parent=None):
         super().__init__(parent)
         self.setAttribute(Qt.WA_TranslucentBackground)
@@ -206,6 +231,11 @@ class OverlayWidget(QWidget):
         # For other keys, use QKeySequence to get the standard string
         return QKeySequence(qt_key_code).toString()
 
+    def set_keymaps(self, keymaps_list: list):
+        """Sets the keymaps from an external source (e.g., Firestore)."""
+        self.keymaps = keymaps_list
+        self.update()  # Redraw to show updated keymaps
+
     def set_edit_mode(self, active: bool):
         """Activates or deactivates the keymap editing mode."""
         self.edit_mode_active = active
@@ -224,6 +254,8 @@ class OverlayWidget(QWidget):
             self._selected_keymap_for_combo_edit = None
             self._pending_modifier_key = None
             self.unsetCursor()  # Reset cursor
+            # Emit signal when exiting edit mode to save changes
+            self.keymaps_changed.emit(self.keymaps)
 
         self.update()  # Request repaint to show/hide grid
 
@@ -305,6 +337,28 @@ class OverlayWidget(QWidget):
                 painter.drawText(keymap_rect, Qt.AlignCenter, display_text)
 
             # Add other keymap types here as needed (e.g., "rectangle", "text")
+
+            # Draw the 'X' button if in edit mode and this keymap is selected
+            if self.edit_mode_active and keymap == self._selected_keymap_for_combo_edit:
+                x_button_size_pixels = 25  # Fixed size for the X button
+                # Position the X button relative to the top-right corner of the keymap_rect
+                x_button_rect = QRectF(
+                    keymap_rect.right() - x_button_size_pixels / 2,
+                    keymap_rect.top() - x_button_size_pixels / 2,
+                    x_button_size_pixels,
+                    x_button_size_pixels
+                )
+
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(QColor(255, 0, 0, 200))  # Red, slightly opaque
+                painter.drawEllipse(x_button_rect)
+
+                font = painter.font()
+                font.setPointSize(int(x_button_size_pixels * 0.7))  # Adjust font size
+                painter.setFont(font)
+                painter.setPen(QColor(255, 255, 255))  # White 'X'
+                painter.drawText(x_button_rect, Qt.AlignCenter, "X")
+
         painter.end()
 
     def mousePressEvent(self, event: QMouseEvent):
@@ -314,7 +368,36 @@ class OverlayWidget(QWidget):
 
         if event.button() == Qt.LeftButton:
             self._drag_start_pos_local = event.pos()  # Pixel position
-            self._selected_keymap_for_combo_edit = None  # Clear any previous selection
+
+            # Check if the click was on the 'X' button of the currently selected keymap
+            if self.edit_mode_active and self._selected_keymap_for_combo_edit:
+                selected_keymap = self._selected_keymap_for_combo_edit
+
+                # Calculate the pixel position and size of the currently selected keymap
+                pixel_x = selected_keymap.normalized_position.x() * self.width()
+                pixel_y = selected_keymap.normalized_position.y() * self.height()
+                pixel_width = selected_keymap.normalized_size.width() * self.width()
+                pixel_height = selected_keymap.normalized_size.height() * self.height()
+                selected_keymap_pixel_rect = QRectF(pixel_x, pixel_y, pixel_width, pixel_height)
+
+                x_button_size_pixels = 25
+                x_button_rect = QRectF(
+                    selected_keymap_pixel_rect.right() - x_button_size_pixels / 2,
+                    selected_keymap_pixel_rect.top() - x_button_size_pixels / 2,
+                    x_button_size_pixels,
+                    x_button_size_pixels
+                )
+
+                if x_button_rect.contains(event.pos()):
+                    self.keymaps.remove(selected_keymap)
+                    self._selected_keymap_for_combo_edit = None
+                    self.keymaps_changed.emit(self.keymaps)  # Signal that keymaps have changed
+                    self.update()  # Redraw to show the keymap removed
+                    print("Keymap removed via 'X' button.")
+                    event.accept()  # Consume the event
+                    return  # Exit early, as we've handled the click
+
+            self._selected_keymap_for_combo_edit = None  # Clear any previous selection unless it was the 'X' button
 
             clicked_on_existing_keymap = False
             # Check if an existing keymap was clicked (using current pixel positions)
@@ -415,17 +498,20 @@ class OverlayWidget(QWidget):
                         # Remove the temporary keymap, as it was just a click
                         self.keymaps.remove(self._dragging_keymap)
 
-                        # Create a new default-sized keymap centered at release position
-                        default_pixel_size = QSize(100, 100)  # Default size in pixels
-                        default_pixel_pos = QPoint(release_pos.x() - default_pixel_size.width() // 2,
-                                                   release_pos.y() - default_pixel_size.height() // 2)
+                        # Define a default pixel diameter for the new circle
+                        default_pixel_diameter = 100
 
-                        # Convert to normalized
-                        new_norm_x = default_pixel_pos.x() / self.width()
-                        new_norm_y = default_pixel_pos.y() / self.height()
-                        new_norm_size = default_pixel_size.width() / self.width()  # Square, so width = height
+                        # Calculate the normalized width and height for a perfect circle
+                        # These values ensure that when scaled back by self.width() and self.height()
+                        # in paintEvent, the pixel width and height are equal (default_pixel_diameter).
+                        new_norm_width = default_pixel_diameter / self.width()
+                        new_norm_height = default_pixel_diameter / self.height()
 
-                        new_keymap = Keymap(normalized_size=(new_norm_size, new_norm_size),
+                        # Calculate the normalized top-left position to center the circle at release_pos
+                        new_norm_x = (release_pos.x() - default_pixel_diameter // 2) / self.width()
+                        new_norm_y = (release_pos.y() - default_pixel_diameter // 2) / self.height()
+
+                        new_keymap = Keymap(normalized_size=(new_norm_width, new_norm_height),
                                             keycombo=[],
                                             normalized_position=(new_norm_x, new_norm_y))
                         self.keymaps.append(new_keymap)
@@ -443,6 +529,7 @@ class OverlayWidget(QWidget):
                 self._dragging_keymap = None  # Stop dragging
                 self._creating_keymap = False
                 self.update()  # Redraw after finalizing changes
+                self.keymaps_changed.emit(self.keymaps)  # Emit signal after modification
         super().mouseReleaseEvent(event)
 
     def keyPressEvent(self, event: QKeyEvent):
@@ -455,6 +542,7 @@ class OverlayWidget(QWidget):
             self.keymaps.remove(self._selected_keymap_for_combo_edit)
             self._selected_keymap_for_combo_edit = None
             self.update()
+            self.keymaps_changed.emit(self.keymaps)  # Emit signal after modification
             print("Keymap deleted.")
             return
 
@@ -486,6 +574,7 @@ class OverlayWidget(QWidget):
                 self._selected_keymap_for_combo_edit = None  # Deselect after setting combo
                 print(f"Keymap combo set to: {[self._get_key_text(k) for k in new_combo]}")
                 self.update()  # Redraw to show updated key combo
+                self.keymaps_changed.emit(self.keymaps)  # Emit signal after modification
         else:
             super().keyPressEvent(event)  # Pass event if no keymap is selected for editing
 
@@ -663,7 +752,7 @@ class MainContentAreaWidget(QWidget):
                 '--tcpip=192.168.1.38',
                 '-S',
                 '--new-display=1920x1080',  # This sets the internal rendering resolution
-                '--start-app=com.ankama.dofustouch',  # Re-added this line
+                '--start-app=com.ankama.dofustouch',  # Re-added this line as requested
                 f'--window-title={self.scrcpy_expected_title}',
                 '--turn-screen-off'  # Turn off device screen to save battery
             ]
@@ -858,21 +947,56 @@ class MyQtApp(QMainWindow):
 
         self.update_max_restore_button()
 
-        # --- Global OverlayWidget Initialization ---
-        # Initialize keymaps with normalized coordinates
-        # These values are based on an assumed 1920x1080 internal resolution for Scrcpy
-        # and represent 50px offset and 100px size from that reference.
-        initial_keymap_circle = Keymap(normalized_size=(100 / 1920.0, 100 / 1080.0),
-                                       keycombo=[Qt.Key_Shift, Qt.Key_A],
-                                       normalized_position=(50 / 1920.0, 50 / 1080.0),
-                                       type="circle")
-        secondary_keymap_circle = Keymap(normalized_size=(100 / 1920.0, 100 / 1080.0),
-                                         keycombo=[Qt.Key_A],
-                                         normalized_position=(400 / 1920.0, 300 / 1080.0),
-                                         type="circle")
-        self.global_overlay = OverlayWidget(keymaps=[initial_keymap_circle, secondary_keymap_circle],
-                                            parent=self)
+        # Initialize global overlay and connect signal
+        self.global_overlay = OverlayWidget(parent=self)
+        self.global_overlay.keymaps_changed.connect(self.save_keymaps_to_local_json)
         self.global_overlay.hide()
+
+        # Load keymaps from local JSON after overlay is set up
+        self.load_keymaps_from_local_json()
+
+    def save_keymaps_to_local_json(self, keymaps_list: list):
+        """Saves the current list of keymaps to a local JSON file."""
+        serializable_keymaps = [km.to_dict() for km in keymaps_list]
+        try:
+            with open(KEYMAP_FILE, 'w') as f:
+                json.dump(serializable_keymaps, f, indent=4)
+            print(f"Keymaps saved to {KEYMAP_FILE} successfully.")
+        except Exception as e:
+            print(f"Error saving keymaps to local JSON: {e}")
+
+    def load_keymaps_from_local_json(self):
+        """Loads keymaps from a local JSON file."""
+        loaded_keymaps = []
+        if os.path.exists(KEYMAP_FILE):
+            try:
+                with open(KEYMAP_FILE, 'r') as f:
+                    data = json.load(f)
+                    loaded_keymaps = [Keymap.from_dict(km_data) for km_data in data]
+                print(f"Keymaps loaded from {KEYMAP_FILE}.")
+            except json.JSONDecodeError as e:
+                print(f"Error decoding JSON from {KEYMAP_FILE}: {e}. Starting with empty keymaps.")
+            except Exception as e:
+                print(f"Error loading keymaps from {KEYMAP_FILE}: {e}. Starting with empty keymaps.")
+        else:
+            print(f"{KEYMAP_FILE} not found, starting with empty keymaps.")
+            # If no file exists, initialize with default keymaps
+            # These values are based on an assumed 1920x1080 internal resolution for Scrcpy
+            # and represent 50px offset and 100px size from that reference.
+            # Example default: A 100x100 pixel circle at (50,50) and another at (400,300)
+            # Converted to normalized for a 1920x1080 Scrcpy area:
+            initial_keymap_circle = Keymap(normalized_size=(100 / 1920.0, 100 / 1080.0),
+                                           keycombo=[Qt.Key_Shift, Qt.Key_A],
+                                           normalized_position=(50 / 1920.0, 50 / 1080.0),
+                                           type="circle")
+            secondary_keymap_circle = Keymap(normalized_size=(100 / 1920.0, 100 / 1080.0),
+                                             keycombo=[Qt.Key_A],
+                                             normalized_position=(400 / 1920.0, 300 / 1080.0),
+                                             type="circle")
+            loaded_keymaps = [initial_keymap_circle, secondary_keymap_circle]
+            self.save_keymaps_to_local_json(loaded_keymaps)  # Save defaults to new file
+
+        self.global_overlay.set_keymaps(loaded_keymaps)
 
     def toggle_edit_mode(self):
         """Toggles the keymap editing mode."""
@@ -1063,6 +1187,7 @@ class MyQtApp(QMainWindow):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.TextAntialiasing)
         background_color = QColor(40, 42, 54)
         painter.setBrush(background_color)
         painter.setPen(Qt.NoPen)
