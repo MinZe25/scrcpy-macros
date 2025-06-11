@@ -108,8 +108,8 @@ class ScrcpyIntegratedApp(QMainWindow):
 
         # Create a timer to update the scrcpy container size
         self.resize_timer = QTimer(self)
-        self.resize_timer.timeout.connect(self.update_container_size)
-        self.resize_timer.start(500)  # Update every 500ms
+        # self.resize_timer.timeout.connect(self.update_container_size)
+        # self.resize_timer.start(500)  # Update every 500ms
 
         # Add a status bar
         self.statusBar().showMessage("Ready")
@@ -197,10 +197,12 @@ class ScrcpyIntegratedApp(QMainWindow):
 
         # Create container widget for the scrcpy window
         self.scrcpy_container = QWidget.createWindowContainer(scrcpy_window, self)
+        self.scrcpy_container.setWindowState(Qt.WindowState.WindowNoState)
         self.scrcpy_container.setMinimumSize(320, 240)
         self.scrcpy_container.setFocusPolicy(Qt.StrongFocus)
         # Set red background to make it visible for debugging
         self.scrcpy_container.setStyleSheet("background-color: red;")
+        self.scrcpy_container.installEventFilter(self)
 
         # Create a frame to hold the scrcpy container and drawing overlay
         self.scrcpy_frame = QFrame()
@@ -899,19 +901,41 @@ class ScrcpyIntegratedApp(QMainWindow):
         """Clear the console output"""
         self.console_output.clear()
 
+    def resize_scrcpy_native_window(self):
+        if not self.scrcpy_hwnd:
+            print("Scrcpy HWND not available for resizing.")
+            return
+
+        # Get the current size of the QWidget container for the native window
+        container_rect = self.scrcpy_container.rect()
+        width = container_rect.width()
+        height = container_rect.height()
+        # print(f"Resizing native window to {width}x{height}")
+        # The native window should be positioned at (0,0) relative to its QWidget container
+        # and have the same dimensions.
+        try:
+            # win32gui.MoveWindow(hWnd, x, y, width, height, repaint)
+            # x, y are relative to the parent window (which for CreateWindowContainer
+            # is typically an internal Qt window, so (0,0) is correct for its client area)
+            win32gui.MoveWindow(self.scrcpy_hwnd, 0, 0, width, height, False)
+            print(f"Resized scrcpy_hwnd to: {width}x{height}")
+        except Exception as e:
+            print(f"Error resizing scrcpy_hwnd: {e}")
+
     def eventFilter(self, obj, event):
         """Handle events for filtered objects"""
-        if obj == self.scrcpy_frame and event.type() == QtCore.QEvent.Resize:
+        if (obj == self.scrcpy_frame or obj == self.scrcpy_container) and event.type() == QtCore.QEvent.Resize:
             # Frame was resized, update container
             if self.scrcpy_container:
                 # Get the inner size of the frame (accounting for layout margins)
-                frame_content_rect = self.scrcpy_layout.contentsRect()
+                # frame_content_rect = self.scrcpy_layout.contentsRect()
                 # Immediately resize the container to match frame content area
-                self.scrcpy_container.resize(frame_content_rect.size())
+                # self.scrcpy_container.resize(frame_content_rect.size())
                 # Move container to the correct position within the frame
-                self.scrcpy_container.move(frame_content_rect.topLeft())
-                print(f"Frame resized to {frame_content_rect.width()}x{frame_content_rect.height()}")
+                # self.scrcpy_container.move(frame_content_rect.topLeft())
+                # print(f"Frame resized to {frame_content_rect.width()}x{frame_content_rect.height()}")
                 # Update the overlay geometry to match the frame's new size
+                self.resize_scrcpy_native_window()
                 self.update_overlay_geometry()
                 # Request repaint to update all overlays
                 self.update()
