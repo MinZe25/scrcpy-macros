@@ -1,30 +1,52 @@
-import sys
-import subprocess
-import threading
 import queue
-import win32gui
+import subprocess
+import sys
+import threading
+
 import win32con
+import win32gui
+from PyQt5 import QtCore
+from PyQt5.QtCore import Qt, QPoint, QTimer, QPointF, QRectF, QRect, QEvent
+from PyQt5.QtGui import QPainter, QColor, QPen
+from PyQt5.QtGui import QWindow
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QPushButton, QVBoxLayout,
                              QHBoxLayout, QLabel, QSplitter, QGroupBox, QToolBar, QAction, QSlider,
-                             QComboBox, QCheckBox, QColorDialog, QSpinBox, QTabWidget, QFrame,
-                             QTextEdit, QPlainTextEdit)
-from PyQt5.QtGui import QPainter, QColor, QPen, QBrush, QIcon, QFont
-from PyQt5.QtCore import Qt, QPoint, QTimer, QRectF, QSize, QRect, QPointF
-from PyQt5.QtGui import QWindow, QResizeEvent
+                             QComboBox, QColorDialog, QSpinBox, QTabWidget, QFrame,
+                             QPlainTextEdit)
+
+from OverlayWidget import OverlayWidget
 
 # Constants
 SCRCPY_WINDOW_TITLE = "touch1"  # The title of the scrcpy window
-DRAWING_PRIMITIVES = {
+
+# Default primitives template - this will be copied to instance variable
+DEFAULT_PRIMITIVES = {
     "primitive_1": {
         "type": "circle",
         "color": (50, 200, 50),  # Default green color
         "opacity": 0.7,
-        "center_coords": (100, 100),  # Top left corner position
+        "center_coords": (100, 100),  # Center position
         "dimensions": 50,  # Default radius
+        "key_combo": ""  # No key combo
+    },
+    "primitive_2": {
+        "type": "circle",
+        "color": (255, 0, 0),  # Red color
+        "opacity": 0.5,
+        "center_coords": (500, 500),  # Center position
+        "dimensions": 40,  # Default radius
+        "key_combo": ""  # No key combo
+    },
+    "primitive_3": {
+        "type": "circle",
+        "color": (0, 100, 255),  # Blue color
+        "opacity": 0.6,
+        "center_coords": (300, 700),  # Center position
+        "dimensions": 60,  # Default radius
         "key_combo": ""  # No key combo
     }
 }
-NEXT_PRIMITIVE_ID = 2
+NEXT_PRIMITIVE_ID = 4
 
 
 class ScrcpyIntegratedApp(QMainWindow):
@@ -48,7 +70,14 @@ class ScrcpyIntegratedApp(QMainWindow):
         self.scrcpy_process = None
         self.scrcpy_hwnd = None
         self.scrcpy_container = None
+        self.scrcpy_frame = None  # Initialize scrcpy_frame to prevent attribute errors
 
+        # Initialize drawing primitives from the default template
+        self.DRAWING_PRIMITIVES = DEFAULT_PRIMITIVES.copy()
+        self.NEXT_PRIMITIVE_ID = NEXT_PRIMITIVE_ID
+        self.drawing_overlay = OverlayWidget(self)
+        self.drawing_overlay.installEventFilter(self)  # Install event filter to monitor events
+        self.drawing_overlay.show()  # Explicitly show the overlay
         # Start scrcpy process
         self.start_scrcpy()
 
@@ -98,7 +127,8 @@ class ScrcpyIntegratedApp(QMainWindow):
                     '--window-borderless'  # Keep this for seamless integration
                 ],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                bufsize=1, universal_newlines=True
+                bufsize=1, universal_newlines=True,
+                creationflags=subprocess.CREATE_NO_WINDOW  # Prevent console window from appearing
             )
 
             # Create a queue for output
@@ -106,16 +136,21 @@ class ScrcpyIntegratedApp(QMainWindow):
 
             # Start threads to read output
             def read_output(stream, queue, prefix):
-                for line in stream:
-                    queue.put(f"{prefix}: {line.strip()}")
+                try:
+                    for line in stream:
+                        queue.put(f"{prefix}: {line.strip()}")
+                except (ValueError, IOError) as e:
+                    queue.put(f"{prefix} ERROR: {str(e)}")
+                except Exception as e:
+                    queue.put(f"{prefix} UNEXPECTED ERROR: {str(e)}")
 
             self.stdout_thread = threading.Thread(
-                target=read_output, 
+                target=read_output,
                 args=(self.scrcpy_process.stdout, self.output_queue, "STDOUT"),
                 daemon=True
             )
             self.stderr_thread = threading.Thread(
-                target=read_output, 
+                target=read_output,
                 args=(self.scrcpy_process.stderr, self.output_queue, "STDERR"),
                 daemon=True
             )
@@ -160,22 +195,48 @@ class ScrcpyIntegratedApp(QMainWindow):
         self.scrcpy_container = QWidget.createWindowContainer(scrcpy_window, self)
         self.scrcpy_container.setMinimumSize(320, 240)
         self.scrcpy_container.setFocusPolicy(Qt.StrongFocus)
+        # Set red background to make it visible for debugging
+        self.scrcpy_container.setStyleSheet("background-color: red;")
 
         # Create a frame to hold the scrcpy container and drawing overlay
         self.scrcpy_frame = QFrame()
         self.scrcpy_frame.setFrameStyle(QFrame.StyledPanel | QFrame.Sunken)
-        self.scrcpy_frame.setStyleSheet("background-color: black;")
+        self.scrcpy_frame.setStyleSheet("background-color: black; border: 2px solid #666666;")
+        # Install event filter to detect resize events
+        self.scrcpy_frame.installEventFilter(self)
 
         self.scrcpy_layout = QVBoxLayout(self.scrcpy_frame)
         self.scrcpy_layout.setContentsMargins(0, 0, 0, 0)
-        self.scrcpy_layout.addWidget(self.scrcpy_container)
 
+        self.scrcpy_layout.addWidget(self.scrcpy_container, 1)  # Give it stretch factor of 1 to fill the space
         # Add to the splitter
         self.splitter.addWidget(self.scrcpy_frame)
 
+        # Ensure the container is properly reparented and raised in the widget stack
+        self.scrcpy_container.setParent(self.scrcpy_frame)
+        self.scrcpy_container.show()
+
+        # Create the overlay widget as a child of the QMainWindow if not already created
+        # Update the overlay geometry and show it
+        self.update_overlay_geometry()
+
+        # Ensure our window has focus
+        self.activateWindow()
+        self.raise_()
+
+        # Explicitly activate the overlay widget
+        if hasattr(self, 'drawing_overlay'):
+            self.drawing_overlay.setVisible(True)
+            self.drawing_overlay.raise_()
+            self.drawing_overlay.activateWindow()
+
         # Configure splitter
-        self.splitter.setStretchFactor(0, 3)  # Give more space to scrcpy
+        self.splitter.setStretchFactor(0, 4)  # Give more space to scrcpy
         self.splitter.setStretchFactor(1, 1)  # Less space for control panel
+
+        # Set initial sizes
+        splitter_sizes = [int(self.width() * 0.8), int(self.width() * 0.2)]
+        self.splitter.setSizes(splitter_sizes)
 
         self.statusBar().showMessage("Scrcpy window embedded successfully")
 
@@ -248,6 +309,8 @@ class ScrcpyIntegratedApp(QMainWindow):
         self.primitive_list.addItem("No primitives")
         self.primitive_list.setEnabled(False)
         self.update_primitive_list()
+        # Connect selection change to selecting the primitive
+        self.primitive_list.currentIndexChanged.connect(self.on_primitive_selection_changed)
         primitive_layout.addWidget(self.primitive_list)
 
         primitive_layout.addWidget(self.delete_primitive_button)
@@ -382,7 +445,9 @@ class ScrcpyIntegratedApp(QMainWindow):
             self.primitive_being_moved = False
             self.start_point = None
 
-        # Update the container to reflect edit mode change
+        # Update the overlay to reflect edit mode change
+        if hasattr(self, 'drawing_overlay'):
+            self.drawing_overlay.update()
         self.update()
 
     def select_color(self):
@@ -412,7 +477,7 @@ class ScrcpyIntegratedApp(QMainWindow):
         """Update the primitive dropdown list"""
         self.primitive_list.clear()
 
-        if not DRAWING_PRIMITIVES:
+        if not self.DRAWING_PRIMITIVES:
             self.primitive_list.addItem("No primitives")
             self.primitive_list.setEnabled(False)
             self.delete_primitive_button.setEnabled(False)
@@ -421,16 +486,48 @@ class ScrcpyIntegratedApp(QMainWindow):
         self.primitive_list.setEnabled(True)
         self.delete_primitive_button.setEnabled(True)
 
-        for p_id in DRAWING_PRIMITIVES:
-            self.primitive_list.addItem(p_id)
+        for p_id, p_data in self.DRAWING_PRIMITIVES.items():
+            # Include type and color information in the display
+            color_name = f"RGB({p_data['color'][0]},{p_data['color'][1]},{p_data['color'][2]})"
+            display_text = f"{p_id} - {p_data['type']} ({color_name})"
+            self.primitive_list.addItem(display_text)
+
+            # Store the actual primitive_id as item data
+            self.primitive_list.setItemData(self.primitive_list.count() - 1, p_id)
+
+    def on_primitive_selection_changed(self, index):
+        """Handle selection change in the primitive list"""
+        if index < 0:
+            self.selected_primitive_id = None
+            return
+
+        # Get the primitive_id from the item data
+        primitive_id = self.primitive_list.itemData(index)
+
+        if primitive_id and primitive_id in self.DRAWING_PRIMITIVES:
+            self.selected_primitive_id = primitive_id
+            # Update the overlay to show selection
+            if hasattr(self, 'drawing_overlay'):
+                self.drawing_overlay.update()
+            self.update()  # Redraw to show selection
 
     def delete_selected_primitive(self):
         """Delete the currently selected primitive from the dropdown"""
-        current_text = self.primitive_list.currentText()
+        current_index = self.primitive_list.currentIndex()
+        if current_index < 0:
+            return
 
-        if current_text != "No primitives" and current_text in DRAWING_PRIMITIVES:
-            del DRAWING_PRIMITIVES[current_text]
+        # Get the primitive_id from the item data
+        primitive_id = self.primitive_list.itemData(current_index)
+
+        if primitive_id and primitive_id in self.DRAWING_PRIMITIVES:
+            del self.DRAWING_PRIMITIVES[primitive_id]
+            # Update UI
+            self.selected_primitive_id = None
             self.update_primitive_list()
+            # Update the overlay
+            if hasattr(self, 'drawing_overlay'):
+                self.drawing_overlay.update()
             self.update()
 
     def restart_scrcpy(self):
@@ -467,170 +564,59 @@ class ScrcpyIntegratedApp(QMainWindow):
         QTimer.singleShot(2000, self.find_and_embed_scrcpy)
 
     def update_container_size(self):
-        """Update the size of the scrcpy container to match the frame"""
+        """Update the size and position of the scrcpy container to match the frame"""
         if self.scrcpy_container and self.scrcpy_frame:
-            # Ensure the container fills the frame
-            self.scrcpy_container.resize(self.scrcpy_frame.size())
+            # Get the frame's content rect (accounting for layout margins)
+            frame_content_rect = self.scrcpy_layout.contentsRect()
 
-    def paintEvent(self, event):
-        """Paint the primitives on top of the scrcpy container"""
-        super().paintEvent(event)
+            # Check if size or position needs updating
+            if (self.scrcpy_container.size() != frame_content_rect.size() or
+                    self.scrcpy_container.pos() != frame_content_rect.topLeft()):
+                # Update both size and position
+                print(f"Adjusting container to {frame_content_rect.width()}x{frame_content_rect.height()}")
+                self.scrcpy_container.resize(frame_content_rect.size())
+                self.scrcpy_container.move(frame_content_rect.topLeft())
 
-        if not self.scrcpy_container or not hasattr(self, 'scrcpy_frame'):
+                # Ensure the container is visible and on top
+                self.scrcpy_container.show()
+                self.scrcpy_container.raise_()
+
+                # Force layout update
+                self.scrcpy_layout.update()
+                # Also update the overlay's geometry
+                self.update_overlay_geometry()
+                # Request repaint
+                self.update()
+
+    def update_overlay_geometry(self):
+        """Calculate the geometry of scrcpy_frame relative to the QMainWindow's viewport
+        and update the overlay widget's position and size accordingly."""
+        if not hasattr(self, 'drawing_overlay') or not self.scrcpy_frame:
             return
+        print("Update geometry")
+        # Calculate the global position of the scrcpy_frame
+        frame_global_pos = self.scrcpy_frame.mapToGlobal(QPoint(0, 0))
+        # Convert back to local coordinates within the main window
+        frame_local_pos_in_main_window = self.mapFromGlobal(frame_global_pos)
+        # Create a rectangle representing the frame's position and size in the main window
+        frame_rect_in_main_window = QRect(frame_local_pos_in_main_window, self.scrcpy_frame.size())
 
-        # Create a painter for the window
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
+        # Set the overlay geometry to match the frame's geometry in the main window
+        self.drawing_overlay.setGeometry(frame_rect_in_main_window)
+        # Use our custom method to ensure overlay is properly visible and on top
+        if hasattr(self.drawing_overlay, 'ensure_on_top'):
+            self.drawing_overlay.ensure_on_top()
+        else:
+            # Fallback to standard methods if ensure_on_top is not available
+            self.drawing_overlay.setVisible(True)
+            self.drawing_overlay.show()
+            self.drawing_overlay.raise_()
+            self.drawing_overlay.activateWindow()
+        # Force update to trigger immediate repaint
+        self.drawing_overlay.update()
 
-        # Get the scrcpy container's global geometry
-        container_rect = self.scrcpy_container.geometry()
-        container_pos = self.scrcpy_container.mapTo(self, QPoint(0, 0))
-        container_rect.moveTo(container_pos)
-
-        # Draw edit mode overlay
-        if self.edit_mode_active:
-            # Semi-transparent overlay to indicate edit mode
-            painter.fillRect(container_rect, QColor(50, 50, 50, 40))
-
-            # Draw guide grid
-            grid_color = QColor(200, 200, 200, 50)
-            painter.setPen(QPen(grid_color, 1, Qt.DashLine))
-
-            # Calculate scale factors
-            scale_factor_x = container_rect.width() / self.device_width
-            scale_factor_y = container_rect.height() / self.device_height
-            actual_scale = min(scale_factor_x, scale_factor_y)
-
-            # Calculate content area size and offset
-            scaled_content_width = self.device_width * actual_scale
-            scaled_content_height = self.device_height * actual_scale
-            offset_x = container_rect.x() + (container_rect.width() - scaled_content_width) / 2
-            offset_y = container_rect.y() + (container_rect.height() - scaled_content_height) / 2
-
-            # Draw horizontal grid lines
-            for y in range(0, self.device_height + 1, 100):
-                scaled_y = offset_y + y * actual_scale
-                painter.drawLine(
-                    int(offset_x), int(scaled_y),
-                    int(offset_x + scaled_content_width), int(scaled_y)
-                )
-
-            # Draw vertical grid lines
-            for x in range(0, self.device_width + 1, 100):
-                scaled_x = offset_x + x * actual_scale
-                painter.drawLine(
-                    int(scaled_x), int(offset_y),
-                    int(scaled_x), int(offset_y + scaled_content_height)
-                )
-
-        # Draw all primitives
-        if self.scrcpy_container:
-            # Calculate scale factors
-            container_width = container_rect.width()
-            container_height = container_rect.height()
-
-            scale_factor_x = container_width / self.device_width
-            scale_factor_y = container_height / self.device_height
-            actual_scale = min(scale_factor_x, scale_factor_y)
-
-            # Calculate content area size and offset
-            scaled_content_width = self.device_width * actual_scale
-            scaled_content_height = self.device_height * actual_scale
-            offset_x = container_rect.x() + (container_width - scaled_content_width) / 2
-            offset_y = container_rect.y() + (container_height - scaled_content_height) / 2
-
-            # Draw all primitives
-            for p_id, p_data in DRAWING_PRIMITIVES.items():
-                p_type = p_data['type']
-                color_rgb = p_data['color']
-                opacity = p_data['opacity']
-                center_x, center_y = p_data['center_coords']
-                dimensions = p_data['dimensions']
-
-                # Calculate scaled coordinates
-                scaled_center_x = offset_x + center_x * actual_scale
-                scaled_center_y = offset_y + center_y * actual_scale
-
-                # Set color with opacity
-                color = QColor(color_rgb[0], color_rgb[1], color_rgb[2])
-                color.setAlphaF(opacity)
-                painter.setBrush(color)
-                painter.setPen(Qt.NoPen)
-
-                if p_type == 'circle':
-                    radius = dimensions
-                    scaled_radius = radius * actual_scale
-                    painter.drawEllipse(
-                        QPointF(scaled_center_x, scaled_center_y),
-                        scaled_radius, scaled_radius
-                    )
-
-                    # Draw selection indicator for selected primitive
-                    if self.edit_mode_active and p_id == self.selected_primitive_id:
-                        # Draw selection outline
-                        select_pen = QPen(Qt.white, 2, Qt.DashLine)
-                        painter.setPen(select_pen)
-                        painter.setBrush(Qt.NoBrush)
-                        painter.drawEllipse(
-                            QPointF(scaled_center_x, scaled_center_y),
-                            scaled_radius + 5, scaled_radius + 5
-                        )
-
-                        # Draw delete button
-                        delete_x = scaled_center_x + scaled_radius * 0.7
-                        delete_y = scaled_center_y - scaled_radius * 0.7
-                        delete_button_radius = self.delete_button_size / 2
-
-                        # Draw red circle for delete button
-                        delete_color = QColor(255, 50, 50, 230)
-                        painter.setBrush(delete_color)
-                        painter.setPen(Qt.NoPen)
-                        painter.drawEllipse(
-                            QPointF(delete_x, delete_y),
-                            delete_button_radius, delete_button_radius
-                        )
-
-                        # Draw X inside button
-                        painter.setPen(QPen(Qt.white, 2))
-                        x_size = delete_button_radius * 0.7
-                        painter.drawLine(
-                            int(delete_x - x_size), int(delete_y - x_size),
-                            int(delete_x + x_size), int(delete_y + x_size)
-                        )
-                        painter.drawLine(
-                            int(delete_x + x_size), int(delete_y - x_size),
-                            int(delete_x - x_size), int(delete_y + x_size)
-                        )
-
-            # Draw primitive being created
-            if self.primitive_being_created:
-                p_data = self.primitive_being_created
-                color_rgb = p_data['color']
-                opacity = p_data['opacity']
-                center_x, center_y = p_data['center_coords']
-                dimensions = p_data['dimensions']
-
-                # Calculate scaled coordinates
-                scaled_center_x = offset_x + center_x * actual_scale
-                scaled_center_y = offset_y + center_y * actual_scale
-
-                # Set color with opacity
-                color = QColor(color_rgb[0], color_rgb[1], color_rgb[2])
-                color.setAlphaF(opacity)
-                painter.setBrush(color)
-
-                # Draw with dashed outline
-                outline_pen = QPen(QColor(255, 255, 255, 150), 2, Qt.DashLine)
-                painter.setPen(outline_pen)
-
-                if p_data['type'] == 'circle':
-                    radius = dimensions
-                    scaled_radius = radius * actual_scale
-                    painter.drawEllipse(
-                        QPointF(scaled_center_x, scaled_center_y),
-                        scaled_radius, scaled_radius
-                    )
+        # The paintEvent method has been removed from the main window class.
+        # All drawing is now handled by the OverlayWidget's paintEvent method.
 
     def mousePressEvent(self, event):
         """Handle mouse press events for creating and selecting primitives"""
@@ -638,13 +624,12 @@ class ScrcpyIntegratedApp(QMainWindow):
         super().mousePressEvent(event)
 
         # Only handle events in edit mode
-        if not self.edit_mode_active or not self.scrcpy_container:
+        if not self.edit_mode_active or not self.scrcpy_container or not hasattr(self, 'drawing_overlay'):
             return
 
         # Check if the click is within the scrcpy container
-        container_rect = self.scrcpy_container.geometry()
-        container_pos = self.scrcpy_container.mapTo(self, QPoint(0, 0))
-        container_rect.moveTo(container_pos)
+        # Use the same container_rect calculation as in paintEvent for consistency
+        container_rect = QRect(self.scrcpy_container.mapTo(self, QPoint(0, 0)), self.scrcpy_container.size())
 
         if not container_rect.contains(event.pos()):
             return
@@ -664,7 +649,7 @@ class ScrcpyIntegratedApp(QMainWindow):
         offset_x = container_rect.x() + (container_width - scaled_content_width) / 2
         offset_y = container_rect.y() + (container_height - scaled_content_height) / 2
 
-        # Convert to device coordinates
+        # Convert to device coordinates - use exact floating point for precise hit detection
         device_x = (pos.x() - offset_x) / actual_scale
         device_y = (pos.y() - offset_y) / actual_scale
 
@@ -709,9 +694,8 @@ class ScrcpyIntegratedApp(QMainWindow):
             return
 
         # Check if the mouse is within the scrcpy container
-        container_rect = self.scrcpy_container.geometry()
-        container_pos = self.scrcpy_container.mapTo(self, QPoint(0, 0))
-        container_rect.moveTo(container_pos)
+        # Use the same container_rect calculation as in paintEvent for consistency
+        container_rect = QRect(self.scrcpy_container.mapTo(self, QPoint(0, 0)), self.scrcpy_container.size())
 
         # Calculate device coordinates
         pos = event.pos()
@@ -739,9 +723,9 @@ class ScrcpyIntegratedApp(QMainWindow):
 
         # Handle moving an existing primitive
         if self.primitive_being_moved and self.selected_primitive_id:
-            if self.selected_primitive_id in DRAWING_PRIMITIVES:
+            if self.selected_primitive_id in self.DRAWING_PRIMITIVES:
                 # Update the primitive's position
-                primitive = DRAWING_PRIMITIVES[self.selected_primitive_id]
+                primitive = self.DRAWING_PRIMITIVES[self.selected_primitive_id]
                 old_center_x, old_center_y = primitive['center_coords']
 
                 # Move the primitive by the drag amount
@@ -770,6 +754,9 @@ class ScrcpyIntegratedApp(QMainWindow):
 
             # Update the primitive being created
             self.primitive_being_created['dimensions'] = radius
+            # Update the overlay
+            if hasattr(self, 'drawing_overlay'):
+                self.drawing_overlay.update()
             self.update()
 
     def mouseReleaseEvent(self, event):
@@ -804,16 +791,17 @@ class ScrcpyIntegratedApp(QMainWindow):
 
         # Clear the start point
         self.start_point = None
+        # Update the overlay
+        if hasattr(self, 'drawing_overlay'):
+            self.drawing_overlay.update()
         self.update()
 
     def add_primitive(self, p_type, color, opacity, center_coords, dimensions):
         """Add a primitive to the drawing primitives"""
-        global NEXT_PRIMITIVE_ID
+        primitive_id = f"primitive_{self.NEXT_PRIMITIVE_ID}"
+        self.NEXT_PRIMITIVE_ID += 1
 
-        primitive_id = f"primitive_{NEXT_PRIMITIVE_ID}"
-        NEXT_PRIMITIVE_ID += 1
-
-        DRAWING_PRIMITIVES[primitive_id] = {
+        self.DRAWING_PRIMITIVES[primitive_id] = {
             'type': p_type,
             'color': color,
             'opacity': opacity,
@@ -827,12 +815,12 @@ class ScrcpyIntegratedApp(QMainWindow):
 
     def remove_primitive(self, primitive_id):
         """Remove a primitive from the drawing primitives"""
-        if primitive_id in DRAWING_PRIMITIVES:
-            del DRAWING_PRIMITIVES[primitive_id]
+        if primitive_id in self.DRAWING_PRIMITIVES:
+            del self.DRAWING_PRIMITIVES[primitive_id]
 
     def find_primitive_at_coords(self, device_x, device_y):
         """Find a primitive at the given device coordinates"""
-        for p_id, p_data in DRAWING_PRIMITIVES.items():
+        for p_id, p_data in self.DRAWING_PRIMITIVES.items():
             p_type = p_data['type']
             center_x, center_y = p_data['center_coords']
             dimensions = p_data['dimensions']
@@ -843,15 +831,16 @@ class ScrcpyIntegratedApp(QMainWindow):
                 distance = ((device_x - center_x) ** 2 + (device_y - center_y) ** 2) ** 0.5
                 if distance <= radius:
                     return p_id
+            # Add handling for other primitive types if needed in the future
 
         return None
 
     def is_delete_button_hit(self, device_x, device_y):
         """Check if the delete button of the selected primitive was hit"""
-        if not self.selected_primitive_id or self.selected_primitive_id not in DRAWING_PRIMITIVES:
+        if not self.selected_primitive_id or self.selected_primitive_id not in self.DRAWING_PRIMITIVES:
             return False
 
-        p_data = DRAWING_PRIMITIVES[self.selected_primitive_id]
+        p_data = self.DRAWING_PRIMITIVES[self.selected_primitive_id]
         center_x, center_y = p_data['center_coords']
         dimensions = p_data['dimensions']
 
@@ -878,6 +867,10 @@ class ScrcpyIntegratedApp(QMainWindow):
     def update_console_output(self):
         """Update the console output with new content from the queue"""
         try:
+            # Check if output_queue and console_output exist
+            if not hasattr(self, 'output_queue') or not hasattr(self, 'console_output'):
+                return
+
             while not self.output_queue.empty():
                 line = self.output_queue.get_nowait()
                 self.console_output.appendPlainText(line)
@@ -892,6 +885,49 @@ class ScrcpyIntegratedApp(QMainWindow):
         """Clear the console output"""
         self.console_output.clear()
 
+    def eventFilter(self, obj, event):
+        """Handle events for filtered objects"""
+        if obj == self.scrcpy_frame and event.type() == QtCore.QEvent.Resize:
+            # Frame was resized, update container
+            if self.scrcpy_container:
+                # Get the inner size of the frame (accounting for layout margins)
+                frame_content_rect = self.scrcpy_layout.contentsRect()
+                # Immediately resize the container to match frame content area
+                self.scrcpy_container.resize(frame_content_rect.size())
+                # Move container to the correct position within the frame
+                self.scrcpy_container.move(frame_content_rect.topLeft())
+                print(f"Frame resized to {frame_content_rect.width()}x{frame_content_rect.height()}")
+                # Update the overlay geometry to match the frame's new size
+                self.update_overlay_geometry()
+                # Request repaint to update all overlays
+                self.update()
+
+        # Monitor overlay widget events
+        elif obj == self.drawing_overlay:
+            if event.type() == QtCore.QEvent.Paint:
+                print("Overlay paint event detected")
+            elif event.type() == QtCore.QEvent.Show:
+                print("Overlay show event detected")
+            elif event.type() == QtCore.QEvent.Hide:
+                print("Overlay hide event detected")
+            elif event.type() == QtCore.QEvent.Resize:
+                print(f"Overlay resize event detected: {self.drawing_overlay.size()}")
+
+        # Always return False to continue standard event processing
+        return False
+
+    def resizeEvent(self, event):
+        """Override resizeEvent for the QMainWindow to update overlay"""
+        super().resizeEvent(event)
+        # Update the overlay geometry when the main window is resized
+        self.update_overlay_geometry()
+
+    def update(self):
+        """Override the update method to ensure overlay gets updated too"""
+        super().update()
+        if hasattr(self, 'drawing_overlay') and self.drawing_overlay.isVisible():
+            self.drawing_overlay.update()
+
     def closeEvent(self, event):
         """Clean up resources when closing the application"""
         # Stop the console update timer
@@ -899,10 +935,14 @@ class ScrcpyIntegratedApp(QMainWindow):
             self.console_timer.stop()
 
         # Kill the scrcpy process when closing the application
-        if self.scrcpy_process:
+        if hasattr(self, 'scrcpy_process') and self.scrcpy_process:
             try:
                 self.scrcpy_process.terminate()
-                self.scrcpy_process.wait(timeout=2)
+                try:
+                    self.scrcpy_process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    # Force kill if it doesn't terminate gracefully
+                    self.scrcpy_process.kill()
             except Exception as e:
                 print(f"Error terminating scrcpy: {e}")
 
