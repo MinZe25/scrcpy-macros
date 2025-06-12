@@ -6,7 +6,9 @@ import time
 import math  # Import math for sqrt if .norm() is not available
 import json  # For serializing/deserializing keymap data
 import os  # For checking file existence
-
+import win32api  # Added for simulating mouse taps
+import pywinauto
+from pywinauto import mouse
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QFrame, QSizePolicy, QSpacerItem, QDialog,
@@ -204,6 +206,7 @@ class OverlayWidget(QWidget):
 
     def __init__(self, keymaps: list = None, parent=None):
         super().__init__(parent)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Tool)
         self.setFocusPolicy(Qt.NoFocus)  # Default: No focus, events pass through
@@ -245,6 +248,8 @@ class OverlayWidget(QWidget):
         self.setAttribute(Qt.WA_TransparentForMouseEvents, not active)
 
         # Set focus policy to allow key events when in edit mode
+        # When not active, we want the main window to handle key presses for keymap activation.
+        # So, the overlay's focus policy should allow it to not capture key events.
         self.setFocusPolicy(Qt.StrongFocus if active else Qt.NoFocus)
 
         if not active:
@@ -362,15 +367,20 @@ class OverlayWidget(QWidget):
         painter.end()
 
     def mousePressEvent(self, event: QMouseEvent):
+        # If not in edit mode, mouse events should pass through the overlay completely.
+        # This is handled by Qt.WA_TransparentForMouseEvents.
         if not self.edit_mode_active:
-            super().mousePressEvent(event)
+            # If WA_TransparentForMouseEvents is correctly applied, this event
+            # should not even reach here if it's meant to pass through.
+            # If it does, then simply returning ensures it's not processed by this widget.
             return
 
+        # --- From here onwards, edit_mode_active is True ---
         if event.button() == Qt.LeftButton:
-            self._drag_start_pos_local = event.pos()  # Pixel position
+            self._drag_start_pos_local = event.pos()
 
-            # Check if the click was on the 'X' button of the currently selected keymap
-            if self.edit_mode_active and self._selected_keymap_for_combo_edit:
+            # 1. Check if the click was on the 'X' button of the currently selected keymap
+            if self._selected_keymap_for_combo_edit:  # Check if something is already selected
                 selected_keymap = self._selected_keymap_for_combo_edit
 
                 # Calculate the pixel position and size of the currently selected keymap
@@ -397,7 +407,8 @@ class OverlayWidget(QWidget):
                     event.accept()  # Consume the event
                     return  # Exit early, as we've handled the click
 
-            self._selected_keymap_for_combo_edit = None  # Clear any previous selection unless it was the 'X' button
+            # 2. Reset selection for a new click
+            self._selected_keymap_for_combo_edit = None
 
             clicked_on_existing_keymap = False
             # Check if an existing keymap was clicked (using current pixel positions)
@@ -428,7 +439,7 @@ class OverlayWidget(QWidget):
                 self._dragging_keymap = new_keymap  # We are "dragging" this new one
 
             self.update()  # Redraw for highlighting or new keymap outline
-        super().mousePressEvent(event)
+        # super().mousePressEvent(event) # No need to call super if we've handled the left click in edit mode.
 
     def mouseMoveEvent(self, event: QMouseEvent):
         if not self.edit_mode_active:
@@ -533,7 +544,13 @@ class OverlayWidget(QWidget):
         super().mouseReleaseEvent(event)
 
     def keyPressEvent(self, event: QKeyEvent):
+        # This method is only for when the OverlayWidget has focus.
+        # In this setup, MyQtApp captures all key presses and forwards them
+        # to the OverlayWidget *only if* in edit mode.
         if not self.edit_mode_active:
+            # If not in edit mode, the key event should be handled by MyQtApp directly.
+            # This 'if' block should theoretically not be reached if MyQtApp is intercepting.
+            # But as a fallback, and for clarity:
             super().keyPressEvent(event)
             return
 
@@ -544,6 +561,7 @@ class OverlayWidget(QWidget):
             self.update()
             self.keymaps_changed.emit(self.keymaps)  # Emit signal after modification
             print("Keymap deleted.")
+            event.accept()
             return
 
         if self._selected_keymap_for_combo_edit:
@@ -575,6 +593,7 @@ class OverlayWidget(QWidget):
                 print(f"Keymap combo set to: {[self._get_key_text(k) for k in new_combo]}")
                 self.update()  # Redraw to show updated key combo
                 self.keymaps_changed.emit(self.keymaps)  # Emit signal after modification
+            event.accept()  # Consume the event if it was for keymap combo setting
         else:
             super().keyPressEvent(event)  # Pass event if no keymap is selected for editing
 
@@ -955,6 +974,57 @@ class MyQtApp(QMainWindow):
         # Load keymaps from local JSON after overlay is set up
         self.load_keymaps_from_local_json()
 
+    def _get_key_text_for_app(self, qt_key_code: int) -> str:
+        """Helper to convert Qt.Key code to its string representation for display/logging."""
+        if qt_key_code == Qt.Key_Shift:
+            return "Shift"
+        elif qt_key_code == Qt.Key_Control:
+            return "Control"
+        elif qt_key_code == Qt.Key_Alt:
+            return "Alt"
+        return QKeySequence(qt_key_code).toString()
+
+    def send_scrcpy_tap(self, x: int, y: int):
+        """
+        Sends a simulated tap event to the currently active Scrcpy window
+        without moving the actual mouse cursor.
+        """
+        current_page = self.stacked_widget.currentWidget()
+        if current_page and current_page.scrcpy_hwnd:
+            hwnd = current_page.scrcpy_hwnd
+
+            # Get the client coordinates of the Scrcpy window relative to the screen
+            # This accounts for the window's borders and title bar, giving us the drawable area.
+            win_rect = win32gui.GetClientRect(hwnd)
+            client_x_offset, client_y_offset = win32gui.ClientToScreen(hwnd, (0, 0))
+
+            # Calculate the absolute screen coordinates for the tap
+            screen_x = client_x_offset + x
+            screen_y = client_y_offset + y
+
+            # Get the screen resolution for normalization
+            screen_width = win32api.GetSystemMetrics(win32con.SM_CXSCREEN)
+            screen_height = win32api.GetSystemMetrics(win32con.SM_CYSCREEN)
+
+            # Normalize coordinates to 0-65535 for MOUSEEVENTF_ABSOLUTE
+            normalized_x = int(screen_x * 65535 / screen_width)
+            normalized_y = int(screen_y * 65535 / screen_height)
+
+            # Simulate left mouse button down and up without moving the physical cursor
+            # win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN | win32con.MOUSEEVENTF_ABSOLUTE, normalized_x,
+            #                      normalized_y, 0, 0)
+            # time.sleep(0.05)  # Small delay for the click to register
+            # win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP | win32con.MOUSEEVENTF_ABSOLUTE, normalized_x,
+            #                      normalized_y, 0, 0)
+            # pydirectinput.click(x, y)
+            pywinauto.mouse._perform_click_input(coords=(x, y))
+            # left_click_event = MouseEvent(MouseCode.MOUSE_LEFT_CLICK, 100, 100)
+            # send_events(left_click_event)
+
+            print(f"Simulated invisible click on Scrcpy window {hwnd} at screen coordinates ({screen_x}, {screen_y})")
+        else:
+            print("No active Scrcpy window to send tap to.")
+
     def save_keymaps_to_local_json(self, keymaps_list: list):
         """Saves the current list of keymaps to a local JSON file."""
         serializable_keymaps = [km.to_dict() for km in keymaps_list]
@@ -983,7 +1053,6 @@ class MyQtApp(QMainWindow):
             # If no file exists, initialize with default keymaps
             # These values are based on an assumed 1920x1080 internal resolution for Scrcpy
             # and represent 50px offset and 100px size from that reference.
-            # Example default: A 100x100 pixel circle at (50,50) and another at (400,300)
             # Converted to normalized for a 1920x1080 Scrcpy area:
             initial_keymap_circle = Keymap(normalized_size=(100 / 1920.0, 100 / 1080.0),
                                            keycombo=[Qt.Key_Shift, Qt.Key_A],
@@ -1278,6 +1347,41 @@ class MyQtApp(QMainWindow):
             # If no Scrcpy page is active, hide the overlay
             self.global_overlay.hide()
             print("Global overlay hidden (no active Scrcpy page).")
+
+    def keyPressEvent(self, event: QKeyEvent):
+        """
+        Handles key press events for the main application window.
+        Routes key presses to keymap activation or editing based on the current mode.
+        """
+        if not self.edit_mode_active:
+            # In play mode, check if the pressed key matches any keymap's assigned key.
+            # We only support single-key triggers for now.
+            for keymap in self.global_overlay.keymaps:
+                if len(keymap.keycombo) == 1 and event.key() == keymap.keycombo[0]:
+                    # Calculate center of keymap in OverlayWidget's coordinate system
+                    # These are pixel coordinates relative to the top-left of the overlay.
+                    pixel_x = keymap.normalized_position.x() * self.global_overlay.width()
+                    pixel_y = keymap.normalized_position.y() * self.global_overlay.height()
+                    pixel_width = keymap.normalized_size.width() * self.global_overlay.width()
+                    pixel_height = keymap.normalized_size.height() * self.global_overlay.height()
+
+                    center_x = int(pixel_x + pixel_width / 2)
+                    center_y = int(pixel_y + pixel_height / 2)
+
+                    self.send_scrcpy_tap(center_x, center_y)
+                    event.accept()  # Consume the event
+                    print(
+                        f"Key '{self._get_key_text_for_app(event.key())}' pressed, activating keymap at ({center_x}, {center_y})")
+                    return
+
+            # If no keymap was activated, let the event propagate normally (e.g., to Scrcpy if possible).
+            super().keyPressEvent(event)
+        else:
+            # In edit mode, forward the key press event to the global overlay
+            # so it can handle setting key combos or deleting keymaps.
+            self.global_overlay.keyPressEvent(event)
+            event.accept()  # Assume the overlay handles it if in edit mode
+            return
 
     def closeEvent(self, event):
         print("Closing application, stopping all Scrcpy processes...")
