@@ -1,0 +1,14 @@
+[
+  {
+    "instance_name": "Instance 1",
+    "use_tcpip": true,
+    "tcpip_address": "192.168.1.38",
+    "video_codec": "h265",
+    "max_fps": 60,
+    "resolution": "1920x1080",
+    "density": 333,
+    "start_app": "com.ankama.dofustouch",
+    "turn_screen_off": true,
+    "no_decorations": false
+  }
+]

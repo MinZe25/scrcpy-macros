@@ -16,6 +16,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QPushButton, QV
                              QPlainTextEdit)
 
 from OverlayWidget import OverlayWidget
+from settings_dialog import SettingsDialog
 
 # Constants
 SCRCPY_WINDOW_TITLE = "touch1"  # The title of the scrcpy window
@@ -417,7 +418,6 @@ class ScrcpyIntegratedApp(QMainWindow):
         self.control_panel.addTab(self.drawing_tab, "Drawing")
         self.control_panel.addTab(self.device_tab, "Device Control")
         self.control_panel.addTab(self.console_tab, "Console")
-
         # Add control panel to the splitter
         self.splitter.addWidget(self.control_panel)
 
