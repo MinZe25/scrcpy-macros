@@ -1,3 +1,6 @@
+from PyQt5.QtCore import QSizeF, QPointF
+
+
 class Keymap:
     """
     Represents a single keymap with its visual properties and associated key combination.
