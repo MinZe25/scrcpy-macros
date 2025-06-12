@@ -169,6 +169,10 @@ class SettingsDialog(QDialog):
         no_decorations_check.setChecked(settings.get("no_decorations", False))
         flags_layout.addWidget(no_decorations_check)
         tab_page.no_decorations_field = no_decorations_check
+        no_audio_check = QCheckBox("No Audio")
+        no_audio_check.setChecked(settings.get("no_audio", False))
+        flags_layout.addWidget(no_audio_check)
+        tab_page.no_audio_field = no_audio_check
 
         flags_layout.addSpacerItem(QSpacerItem(40, 20, QSizePolicy.Expanding, QSizePolicy.Minimum))
         layout.addRow("Other Flags:", flags_layout)
@@ -212,6 +216,7 @@ class SettingsDialog(QDialog):
                 "start_app": tab.start_app_field.text(),
                 "turn_screen_off": tab.turn_screen_off_field.isChecked(),
                 "no_decorations": tab.no_decorations_field.isChecked(),
+                "no_audio": tab.no_audio_field.isChecked(),
             }
             self.final_settings.append(settings_data)
 
@@ -234,33 +239,17 @@ class SettingsDialog(QDialog):
 # --- Example Usage (for standalone testing) ---
 if __name__ == '__main__':
     app = QApplication(sys.argv)
+    def load_settings_from_local_json():
+        try:
+            with open('settings.json', 'r', encoding='utf-8') as f:
+                return json.load(f)
+            print(f"Keymaps loaded from {'settings.json'}.")
+        except Exception as e:
+            print(f"Error loading keymaps from {'settings.json'}: {e}. Starting with empty keymaps.")
 
     # Example of pre-existing settings you might load from a file
     # If this is None or empty, the dialog will start with one default tab
-    sample_settings = [
-        {
-            "instance_name": "Dofus-Main",
-            "use_tcpip": True,
-            "tcpip_address": "192.168.1.100",
-            "video_codec": "h265",
-            "max_fps": 60,
-            "resolution": "1920x1080",
-            "start_app": "com.ankama.dofustouch",
-            "turn_screen_off": True,
-            "no_decorations": False
-        },
-        {
-            "instance_name": "USB-Device",
-            "use_tcpip": False,
-            "tcpip_address": "",  # Not used
-            "video_codec": "h264",
-            "max_fps": 30,
-            "resolution": "1280x720",
-            "start_app": "com.android.settings",
-            "turn_screen_off": False,
-            "no_decorations": True
-        }
-    ]
+    sample_settings = load_settings_from_local_json()
 
     dialog = SettingsDialog(current_settings=sample_settings)
 

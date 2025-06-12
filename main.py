@@ -363,7 +363,7 @@ class MyQtApp(QMainWindow):
                     # No need for this resize here, it will happen after layout update
                     # page.resize_scrcpy_native_window()
                     try:
-                        win32gui.SetFocus(page.scrcpy_hwnd)
+                        # win32gui.SetFocus(page.scrcpy_hwnd)
                         # And again, no need for this resize here
                         # page.resize_scrcpy_native_window()
                         print(f"Set native focus to Scrcpy window HWND: {page.scrcpy_hwnd} on page change.")
@@ -417,6 +417,21 @@ class MyQtApp(QMainWindow):
                 self.edit_overlay.hide()
         except Exception as e:
             print(f"Error updating global overlay geometry: {e}")
+
+    def keyReleaseEvent(self, event: QKeyEvent):
+        if self.is_soft_keyboard_active:
+            super().keyPressEvent(event)
+            return
+
+        if not self.edit_mode_active:
+            if event.key() == Qt.Key_Alt:
+                self.stacked_widget.setCurrentIndex(
+                    (self.stacked_widget.currentIndex() + 1) % self.stacked_widget.count())
+                event.accept()
+                return
+
+        # Important: Call the superclass method to ensure standard processing
+        super().keyReleaseEvent(event)
 
     def keyPressEvent(self, event: QKeyEvent):
         if self.is_soft_keyboard_active:

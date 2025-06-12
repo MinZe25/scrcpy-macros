@@ -102,6 +102,8 @@ class MainContentAreaWidget(QWidget):
             # Check if screen turn-off is enabled, then append the '-S' flag (this flag doesn't take a value).
             if self.settings.get('turn_screen_off'):
                 cmd.append('-S')
+            if self.settings.get('no_audio'):
+                cmd.append('--no-audio')
 
             # Check if no decorations are desired, then append the corresponding flag (this flag doesn't take a value).
             if self.settings.get('no_decorations'):

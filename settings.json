@@ -8,7 +8,8 @@
     "resolution": "1920x1080",
     "start_app": "com.ankama.dofustouch",
     "turn_screen_off": true,
-    "no_decorations": false
+    "no_decorations": false,
+    "no_audio": false
   },
   {
     "instance_name": "Second",
@@ -19,6 +20,7 @@
     "resolution": "1920x1080",
     "start_app": "com.ankama.dofustouci",
     "turn_screen_off": true,
-    "no_decorations": false
+    "no_decorations": false,
+    "no_audio": true
   }
 ]
