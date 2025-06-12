@@ -68,8 +68,122 @@ SCRCPY_NATIVE_HEIGHT = 1080  # Native resolution for ADB tap commands
 
 KEYMAP_FILE = "keymaps.json"  # Local JSON file for keymap storage
 
-
 # --- Global Stylesheet ---
+GLOBAL_STYLESHEET = """
+QMainWindow {
+    /* Styles for child widgets inside QMainWindow that are not handled by custom classes */
+}
+
+/* Custom Title Bar Styling */
+#TitleBar {
+    background-color: #21222C; /* Slightly darker than main window */
+    border-top-left-radius: 10px; /* Still apply here for the visual look of the bar */
+    border-top-right-radius: 10px;
+}
+
+#TitleBar QLabel {
+    color: #f8f8f2; /* White text */
+    padding-left: 10px;
+    font-size: 14px;
+    font-weight: bold;
+}
+
+#TitleBar QPushButton {
+    background-color: #333642; /* Make button background visible even when not hovered */
+    border: none;
+    padding: 5px;
+    border-radius: 5px;
+    color: #f8f8f2;
+    font-size: 16px;
+    min-width: 30px; /* Ensure clickability */
+    min-height: 30px;
+}
+
+#TitleBar QPushButton:hover {
+    background-color: #44475a; /* Lighter on hover */
+}
+
+/* Close button specific styling for a distinct look */
+#TitleBar QPushButton#CloseButton:hover {
+    background-color: #ff5555; /* Red on hover */
+}
+
+/* Sidebar Styling */
+#SidebarFrame { /* Using objectName for the frame */
+    background-color: #21222C; /* Darker than main window */
+    border-bottom-left-radius: 10px; /* Match main window's bottom left */
+    padding: 5px;
+}
+
+#SidebarButton { /* For instance buttons */
+    background-color: #44475a; /* Slightly lighter than sidebar background */
+    color: #f8f8f2;
+    border: none;
+    border-radius: 8px; /* Rounded buttons */
+    min-width: 40px;
+    max-width: 40px;
+    min-height: 40px;
+    max-height: 40px;
+    font-size: 18px; /* Example icon size */
+    margin: 5px; /* Spacing between buttons */
+}
+
+#SidebarButton:hover {
+    background-color: #6272a4; /* Dracula purple on hover */
+}
+
+#SidebarButton:pressed {
+    background-color: #bd93f9; /* Lighter purple on pressed */
+}
+
+#SettingsButton { /* For the settings button */
+    background-color: #44475a;
+    color: #f8f8f2;
+    border: none;
+    border-radius: 8px;
+    min-width: 40px;
+    max-width: 40px;
+    min-height: 40px;
+    max-height: 40px;
+    font-size: 18px;
+    margin: 5px;
+}
+
+#SettingsButton:hover {
+    background-color: #6272a4;
+}
+
+#SettingsButton:pressed {
+    background-color: #bd93f9;
+}
+
+/* Main Content Area Styling */
+#MainContentWidget { /* Using objectName for the main content widget */
+    background-color: #282a36; /* Same as main window for seamless look */
+    border-bottom-right-radius: 10px;
+}
+
+/* Specific styling for the QLabel within MainContentAreaWidget instances */
+#MainContentWidget QLabel {
+    background-color: #383a59; /* Slightly different dark shade */
+    border: 2px dashed #f8f8f2;
+    border-radius: 8px;
+    color: #f8f8f2;
+    font-size: 16px;
+    padding: 20px;
+}
+
+/* Generic QDialog Styling (for settings dialog) */
+QDialog {
+    background-color: #282a36;
+    border: 1px solid #6272a4;
+    border-radius: 10px;
+    color: #f8f8f2;
+}
+QDialog QLabel {
+    color: #f8f8f2;
+}
+"""
 
 
 # --- Keymap Class ---
@@ -118,14 +232,27 @@ class Keymap:
 class OverlayWidget(QWidget):
     keymaps_changed = pyqtSignal(list)  # Signal to notify parent of keymap changes
 
-    def __init__(self, keymaps: list = None, parent=None):
+    def __init__(self, keymaps: list = None, parent=None, is_transparent_to_mouse: bool = False):
+        """
+        Initialize an OverlayWidget.
+
+        Args:
+            keymaps (list): A reference to the list of keymap objects.
+            parent (QWidget): The parent widget.
+            is_transparent_to_mouse (bool): If True, mouse events will pass through this widget.
+        """
         super().__init__(parent)
         self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        # Set transparency attribute ONLY ONCE based on init parameter
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, is_transparent_to_mouse)
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Tool)
-        self.setFocusPolicy(Qt.NoFocus)  # Default: No focus, events pass through
+        # Set focus policy to allow key events when in edit mode (if not transparent to mouse)
+        # Otherwise, focus policy should allow events to pass through implicitly.
+        self.setFocusPolicy(Qt.StrongFocus if not is_transparent_to_mouse else Qt.NoFocus)
+
         self.keymaps = keymaps if keymaps is not None else []
-        self.edit_mode_active = False
+
+        self.edit_mode_active = False # Controls visual elements like grid and selection
         self._dragging_keymap = None
         self._creating_keymap = False
         self._drag_start_pos_local = QPoint()  # Stores the QPoint of mousePressEvent (pixel)
@@ -148,22 +275,20 @@ class OverlayWidget(QWidget):
         return QKeySequence(qt_key_code).toString()
 
     def set_keymaps(self, keymaps_list: list):
-        """Sets the keymaps from an external source (e.g., Firestore)."""
-        self.keymaps = keymaps_list
+        """Sets the keymaps from an external source. Assumes it's a shared list."""
+        self.keymaps = keymaps_list # We are given a reference to the shared list
         self.update()  # Redraw to show updated keymaps
 
     def set_edit_mode(self, active: bool):
-        """Activates or deactivates the keymap editing mode."""
+        """
+        Activates or deactivates the keymap editing mode for this specific overlay.
+        This primarily affects drawing (grid, selection) and focus policy if this overlay is meant to interact.
+        It DOES NOT change mouse transparency here.
+        """
         self.edit_mode_active = active
-        # Make the overlay transparent to mouse events when not in edit mode,
-        # so clicks go through to the Scrcpy window.
-        # When active, it should capture mouse events.
-        self.setAttribute(Qt.WA_TransparentForMouseEvents, False)
-
-        # Set focus policy to allow key events when in edit mode
-        # When not active, we want the main window to handle key presses for keymap activation.
-        # So, the overlay's focus policy should allow it to not capture key events.
-        self.setFocusPolicy(Qt.StrongFocus if active else Qt.NoFocus)
+        # Only set focus policy if this overlay is designed to capture events (i.e., not transparent to mouse)
+        if not self.testAttribute(Qt.WA_TransparentForMouseEvents):
+            self.setFocusPolicy(Qt.StrongFocus if active else Qt.NoFocus)
 
         if not active:
             # Clear any active editing states when leaving edit mode
@@ -172,10 +297,10 @@ class OverlayWidget(QWidget):
             self._selected_keymap_for_combo_edit = None
             self._pending_modifier_key = None
             self.unsetCursor()  # Reset cursor
-            # Emit signal when exiting edit mode to save changes
+            # Emit signal when exiting edit mode to save changes (only the edit overlay will do this)
             self.keymaps_changed.emit(self.keymaps)
 
-        self.update()  # Request repaint to show/hide grid
+        self.update()  # Request repaint to show/hide grid/selection
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -190,7 +315,7 @@ class OverlayWidget(QWidget):
         painter.setPen(QColor(255, 255, 255))  # White text
         painter.drawText(10, 30, "Overlay Controls Here")
 
-        # Draw semi-transparent background if in edit mode
+        # Draw semi-transparent background if in edit mode (only the edit overlay)
         if self.edit_mode_active:
             painter.setBrush(QColor(0, 0, 0, 60))  # Black with 60 alpha (more transparent)
             painter.setPen(Qt.NoPen)
@@ -280,15 +405,16 @@ class OverlayWidget(QWidget):
         painter.end()
 
     def mousePressEvent(self, event: QMouseEvent):
-        # If not in edit mode, mouse events should pass through the overlay completely.
-        # This is handled by Qt.WA_TransparentForMouseEvents.
+        # This overlay will receive mouse events only if it's NOT Qt.WA_TransparentForMouseEvents.
+        # So, we only need to process events if edit mode is active.
         if not self.edit_mode_active:
-            # If WA_TransparentForMouseEvents is correctly applied, this event
-            # should not even reach here if it's meant to pass through.
-            # If it does, then simply returning ensures it's not processed by this widget.
+            # If not in edit mode, and this overlay is configured to be non-transparent,
+            # this shouldn't happen if the correct overlay is shown/hidden.
+            # But as a safeguard, if this somehow gets an event when it shouldn't, ignore it.
+            super().mousePressEvent(event)
             return
 
-        # --- From here onwards, edit_mode_active is True ---
+        # --- From here onwards, edit_mode_active is True and this overlay is receiving events ---
         if event.button() == Qt.LeftButton:
             self._drag_start_pos_local = event.pos()
 
@@ -355,7 +481,7 @@ class OverlayWidget(QWidget):
         # super().mousePressEvent(event) # No need to call super if we've handled the left click in edit mode.
 
     def mouseMoveEvent(self, event: QMouseEvent):
-        if not self.edit_mode_active:
+        if not self.edit_mode_active: # This overlay should only receive events in edit mode
             super().mouseMoveEvent(event)
             return
 
@@ -399,7 +525,7 @@ class OverlayWidget(QWidget):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event: QMouseEvent):
-        if not self.edit_mode_active:
+        if not self.edit_mode_active: # This overlay should only receive events in edit mode
             super().mouseReleaseEvent(event)
             return
 
@@ -457,13 +583,9 @@ class OverlayWidget(QWidget):
         super().mouseReleaseEvent(event)
 
     def keyPressEvent(self, event: QKeyEvent):
-        # This method is only for when the OverlayWidget has focus.
-        # In this setup, MyQtApp captures all key presses and forwards them
-        # to the OverlayWidget *only if* in edit mode.
+        # This overlay will receive key events only if it has focus and is not transparent to mouse.
+        # So, we only need to process events if edit mode is active.
         if not self.edit_mode_active:
-            # If not in edit mode, the key event should be handled by MyQtApp directly.
-            # This 'if' block should theoretically not be reached if MyQtApp is intercepting.
-            # But as a fallback, and for clarity:
             super().keyPressEvent(event)
             return
 
@@ -511,6 +633,47 @@ class OverlayWidget(QWidget):
             super().keyPressEvent(event)  # Pass event if no keymap is selected for editing
 
 
+# --- Custom Title Bar Class ---
+# class CustomTitleBar(QWidget):
+#     def __init__(self, parent):
+#         super().__init__(parent)
+#         self.parent_window = parent
+#         self.setObjectName("TitleBar")
+#
+#         self.setFixedHeight(35)
+#
+#         self.layout = QHBoxLayout(self)
+#         self.layout.setContentsMargins(0, 0, 0, 0)
+#         self.layout.setSpacing(0)
+#
+#         self.app_icon = QLabel("Bonito")
+#         self.app_icon.setFont(QFont("Inter", 16))
+#         self.layout.addWidget(self.app_icon)
+#
+#         self.layout.addSpacerItem(QSpacerItem(40, 20, QSizePolicy.Expanding, QSizePolicy.Minimum))
+#
+#         # Change button text and connect to new toggle method
+#         self.edit_button = QPushButton("Edit")
+#         self.edit_button.setObjectName("EditButton")  # Changed ID
+#         self.edit_button.clicked.connect(self.parent_window.toggle_edit_mode)
+#         self.layout.addWidget(self.edit_button)
+#
+#         self.min_button = QPushButton("─")
+#         self.min_button.setObjectName("MinimizeButton")
+#         self.min_button.clicked.connect(self.parent_window.showMinimized)
+#         self.layout.addWidget(self.min_button)
+#
+#         self.max_button = QPushButton("⬜")
+#         self.max_button.setObjectName("MaximizeButton")
+#         self.max_button.clicked.connect(self.parent_window.toggle_maximize_restore)
+#         self.layout.addWidget(self.max_button)
+#
+#         self.close_button = QPushButton("✕")
+#         self.close_button.setObjectName("CloseButton")
+#         self.close_button.clicked.connect(self.parent_window.close)
+#         self.layout.addWidget(self.close_button)
+
+
 # --- Sidebar Widget Class ---
 class SidebarWidget(QFrame):
     settings_requested = pyqtSignal()
@@ -552,6 +715,60 @@ class SidebarWidget(QFrame):
     def _on_instance_button_clicked(self, index: int):
         print(f"Sidebar: Instance button {index + 1} clicked, emitting index {index}.")
         self.instance_selected.emit(index)
+
+
+class SideGrip(QWidget):
+    def __init__(self, parent, edge):
+        QWidget.__init__(self, parent)
+        if edge == Qt.LeftEdge:
+            self.setCursor(Qt.SizeHorCursor)
+            self.resizeFunc = self.resizeLeft
+        elif edge == Qt.TopEdge:
+            self.setCursor(Qt.SizeVerCursor)
+            self.resizeFunc = self.resizeTop
+        elif edge == Qt.RightEdge:
+            self.setCursor(Qt.SizeHorCursor)
+            self.resizeFunc = self.resizeRight
+        else:
+            self.setCursor(Qt.SizeVerCursor)
+            self.resizeFunc = self.resizeBottom
+        self.mousePos = None
+
+    def resizeLeft(self, delta):
+        window = self.window()
+        width = max(window.minimumWidth(), window.width() - delta.x())
+        geo = window.geometry()
+        geo.setLeft(geo.right() - width)
+        window.setGeometry(geo)
+
+    def resizeTop(self, delta):
+        window = self.window()
+        height = max(window.minimumHeight(), window.height() - delta.y())
+        geo = window.geometry()
+        geo.setTop(geo.bottom() - height)
+        window.setGeometry(geo)
+
+    def resizeRight(self, delta):
+        window = self.window()
+        width = max(window.minimumWidth(), window.width() + delta.x())
+        window.resize(width, window.height())
+
+    def resizeBottom(self, delta):
+        window = self.window()
+        height = max(window.minimumHeight(), window.height() + delta.y())
+        window.resize(window.width(), height)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.mousePos = event.pos()
+
+    def mouseMoveEvent(self, event):
+        if self.mousePos is not None:
+            delta = event.pos() - self.mousePos
+            self.resizeFunc(delta)
+
+    def mouseReleaseEvent(self, event):
+        self.mousePos = None
 
 
 # --- Main Content Area Widget Class ---
@@ -781,7 +998,7 @@ class MainContentAreaWidget(QWidget):
             self.scrcpy_stderr_reader = None
 
 
-# --- Main Application Window (MODIFIED to manage a global OverlayWidget) ---
+# --- Main Application Window (MODIFIED to manage two OverlayWidgets) ---
 class MyQtApp(QMainWindow):
     _gripSize = 8
 
@@ -789,9 +1006,20 @@ class MyQtApp(QMainWindow):
         super().__init__()
         self.setWindowTitle("Bonito Integrated Controller")
         self.setGeometry(100, 100, 1200, 800)
+        # self.setWindowFlags(Qt.FramelessWindowHint) # Removed as per user request
 
-        self.setStyleSheet(self.load_stylesheet_from_file("./style.css"))
+        # Original grip logic remains commented out
+        # self.sideGrips = [
+        #     SideGrip(self, Qt.LeftEdge),
+        #     SideGrip(self, Qt.TopEdge),
+        #     SideGrip(self, Qt.RightEdge),
+        #     SideGrip(self, Qt.BottomEdge),
+        # ]
+        # self.cornerGrips = [QSizeGrip(self) for i in range(4)]
 
+        self.setStyleSheet(GLOBAL_STYLESHEET)
+
+        # Removed custom move/resize attributes (handled by native window)
         self.setMouseTracking(True)  # Still useful for potential future custom interactions
         self.edit_mode_active = False  # New state for edit mode
 
@@ -800,6 +1028,10 @@ class MyQtApp(QMainWindow):
         self.main_layout = QVBoxLayout(self.main_widget)
         self.main_layout.setContentsMargins(0, 0, 0, 0)
         self.main_layout.setSpacing(0)
+
+        # CustomTitleBar remains commented out as requested
+        # self.title_bar = CustomTitleBar(self)
+        # self.main_layout.addWidget(self.title_bar)
 
         self.content_layout = QHBoxLayout()
         self.content_layout.setContentsMargins(0, 0, 0, 0)
@@ -836,34 +1068,25 @@ class MyQtApp(QMainWindow):
 
         self.update_max_restore_button()
 
-        # Initialize global overlay and connect signal
-        self.global_overlay = OverlayWidget(parent=self)
-        self.global_overlay.keymaps_changed.connect(self.save_keymaps_to_local_json)
-        self.global_overlay.hide()
+        # New: Shared list for keymaps (single source of truth)
+        self.current_instance_keymaps = []
 
-        # Load keymaps from local JSON after overlay is set up
+        # New: Initialize two separate overlay widgets
+        # One for display in play mode (transparent to mouse events)
+        self.play_overlay = OverlayWidget(keymaps=self.current_instance_keymaps, is_transparent_to_mouse=True, parent=self)
+        # One for interaction in edit mode (captures mouse events)
+        self.edit_overlay = OverlayWidget(keymaps=self.current_instance_keymaps, is_transparent_to_mouse=False, parent=self)
+
+        # Only the edit_overlay will emit keymaps_changed as it's the one for interaction
+        self.edit_overlay.keymaps_changed.connect(self.save_keymaps_to_local_json)
+
+        # Initially, show the play_overlay and hide the edit_overlay
+        self.play_overlay.show()
+        self.edit_overlay.hide()
+
+        # Load keymaps from local JSON after overlays are set up
         self.load_keymaps_from_local_json()
 
-    def load_stylesheet_from_file(self, filepath: str) -> str:
-        """
-        Loads a stylesheet from a given file path and returns its content as a string.
-
-        Args:
-            filepath (str): The path to the CSS file.
-
-        Returns:
-            str: The content of the CSS file, or an empty string if the file is not found.
-        """
-        if not os.path.exists(filepath):
-            print(f"Warning: Stylesheet file not found at {filepath}")
-            return ""
-        try:
-            with open(filepath, 'r', encoding='utf-8') as f:
-                stylesheet_content = f.read()
-            return stylesheet_content
-        except Exception as e:
-            print(f"Error loading stylesheet from {filepath}: {e}")
-            return ""
 
     def _get_key_text_for_app(self, qt_key_code: int) -> str:
         """Helper to convert Qt.Key code to its string representation for display/logging."""
@@ -936,7 +1159,10 @@ class MyQtApp(QMainWindow):
             print("Cannot send ADB tap: No active Scrcpy page or display ID not detected.")
 
     def save_keymaps_to_local_json(self, keymaps_list: list):
-        """Saves the current list of keymaps to a local JSON file."""
+        """
+        Saves the current list of keymaps (from the shared list) to a local JSON file.
+        The keymaps_list argument here is the shared self.current_instance_keymaps.
+        """
         serializable_keymaps = [km.to_dict() for km in keymaps_list]
         try:
             with open(KEYMAP_FILE, 'w') as f:
@@ -946,11 +1172,14 @@ class MyQtApp(QMainWindow):
             print(f"Error saving keymaps to local JSON: {e}")
 
     def load_keymaps_from_local_json(self):
-        """Loads keymaps from a local JSON file."""
+        """
+        Loads keymaps from a local JSON file and populates the shared keymaps list.
+        Then updates both play and edit overlays.
+        """
         loaded_keymaps = []
         if os.path.exists(KEYMAP_FILE):
             try:
-                with open(KEYMAP_FILE, 'r') as f:
+                with open(KEYMAP_FILE, 'r', encoding='utf-8') as f: # Specify encoding
                     data = json.load(f)
                     loaded_keymaps = [Keymap.from_dict(km_data) for km_data in data]
                 print(f"Keymaps loaded from {KEYMAP_FILE}.")
@@ -976,24 +1205,31 @@ class MyQtApp(QMainWindow):
             loaded_keymaps = [initial_keymap_circle, secondary_keymap_circle]
             self.save_keymaps_to_local_json(loaded_keymaps)  # Save defaults to new file
 
-        self.global_overlay.set_keymaps(loaded_keymaps)
+        # Clear existing keymaps and extend with loaded ones to maintain same list reference
+        self.current_instance_keymaps[:] = loaded_keymaps
+        self.play_overlay.set_keymaps(self.current_instance_keymaps) # Update reference just in case
+        self.edit_overlay.set_keymaps(self.current_instance_keymaps) # Update reference just in case
+
 
     def toggle_edit_mode(self):
-        """Toggles the keymap editing mode."""
+        """
+        Toggles the keymap editing mode by switching between the play and edit overlays.
+        """
         self.edit_mode_active = not self.edit_mode_active
-        self.global_overlay.set_edit_mode(self.edit_mode_active)
-        self.update_global_overlay_geometry()  # Recalculate to show/hide overlay as needed
+        print(f"Edit mode toggled to: {self.edit_mode_active}")
 
-        # Update button text/style - These lines related to CustomTitleBar are now correctly commented out
-        # if self.edit_mode_active:
-        # self.title_bar.edit_button.setText("Exit Edit")
-        # self.title_bar.edit_button.setStyleSheet(
-        #     "background-color: #BD93F9; color: #282a36;")  # Highlight when active
-        # else:
-        # self.title_bar.edit_button.setText("Edit")
-        # self.title_bar.edit_button.setStyleSheet("")  # Reset to default style
+        if self.edit_mode_active: # Entering edit mode
+            self.play_overlay.hide()
+            self.edit_overlay.show()
+            self.edit_overlay.set_edit_mode(True) # Activate edit mode visuals on edit overlay
+            self.edit_overlay.setFocus() # Give focus to the edit overlay
+        else: # Exiting edit mode
+            self.edit_overlay.hide()
+            self.play_overlay.show()
+            self.edit_overlay.set_edit_mode(False) # Deactivate edit mode visuals on edit overlay
+            self.setFocus() # Return focus to the main window for keymap activation
 
-        print(f"Edit mode active: {self.edit_mode_active}")
+        self.update_global_overlay_geometry() # Ensure correct overlay is positioned
 
     def show_settings_dialog(self):
         """Displays the settings dialog, importing it from settings_dialog.py."""
@@ -1001,6 +1237,7 @@ class MyQtApp(QMainWindow):
         try:
             # Dynamically import the SettingsDialog from the external file
             from settings_dialog import SettingsDialog
+            # Assuming SettingsDialog is a QDialog, it will block until closed.
             dialog = SettingsDialog(self)
             dialog.exec_()  # Show the dialog modally
             print("Settings dialog closed.")
@@ -1022,36 +1259,9 @@ class MyQtApp(QMainWindow):
     def updateGrips(self):
         # This method and related grip logic are commented out in the original, so keeping it that way.
         pass
-        # self.setContentsMargins(*[self.gripSize] * 4)
-
-        # outRect = self.rect()
-        # inRect = outRect.adjusted(self.gripSize, self.gripSize,
-        #                           -self.gripSize, -self.gripSize)
-
-        # self.cornerGrips[0].setGeometry(
-        #     QRect(outRect.topLeft(), inRect.topLeft()))
-        # self.cornerGrips[1].setGeometry(
-        #     QRect(outRect.topRight(), inRect.topRight()).normalized())
-        # self.cornerGrips[2].setGeometry(
-        #     QRect(inRect.bottomRight(), outRect.bottomRight()))
-        # self.cornerGrips[3].setGeometry(
-        #     QRect(outRect.bottomLeft(), inRect.bottomLeft()).normalized())
-
-        # self.sideGrips[0].setGeometry(
-        #     0, inRect.top(), self.gripSize, inRect.height())
-        # self.sideGrips[1].setGeometry(
-        #     inRect.left(), 0, inRect.width(), self.gripSize)
-        # self.sideGrips[2].setGeometry(
-        #     inRect.left() + inRect.width(),
-        #     inRect.top(), self.gripSize, inRect.height())
-        # self.sideGrips[3].setGeometry(
-        #     self.gripSize, inRect.top() + inRect.height(),
-        #     inRect.width(), self.gripSize)
 
     def resizeEvent(self, event):
         QMainWindow.resizeEvent(self, event)
-        # updateGrips and update_max_restore_button related calls are now correctly commented out as per original
-        # self.updateGrips()
         self.update_max_restore_button()
         # Defer updating the overlay's geometry to ensure layouts have settled
         QTimer.singleShot(0, self.update_global_overlay_geometry)
@@ -1078,7 +1288,8 @@ class MyQtApp(QMainWindow):
     # New: Override moveEvent to update overlay position
     def moveEvent(self, event):
         super().moveEvent(event)
-        self.update_global_overlay_geometry()  # Ensure overlay moves with the main window
+        self.update_global_overlay_geometry() # Ensure overlay moves with the main window
+
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -1100,9 +1311,7 @@ class MyQtApp(QMainWindow):
 
     def showEvent(self, event):
         super().showEvent(event)
-        # update_max_restore_button and updateGrips related calls are now correctly commented out as per original
         self.update_max_restore_button()
-        # self.updateGrips()
         # Ensure global overlay is positioned and shown correctly on app startup
         # We still call this here to handle cases where the app is launched and Scrcpy
         # is already running or found very quickly.
@@ -1133,14 +1342,18 @@ class MyQtApp(QMainWindow):
     def update_global_overlay_geometry(self):
         """
         Calculates the global geometry of the current Scrcpy display area
-        and sets the global_overlay's geometry to match it, maintaining aspect ratio.
-        The overlay is always shown if a Scrcpy page is active.
+        and sets the currently active overlay's geometry to match it, maintaining aspect ratio.
+        The active overlay is always shown if a Scrcpy page is active.
         """
         current_page = self.stacked_widget.currentWidget()
 
         if current_page and \
                 hasattr(current_page, 'scrcpy_container_widget') and \
                 current_page.scrcpy_container_widget:
+
+            # Determine which overlay to position based on edit mode
+            active_overlay_to_move = self.edit_overlay if self.edit_mode_active else self.play_overlay
+
             # Get the global position of the Scrcpy container widget
             global_pos = current_page.scrcpy_container_widget.mapToGlobal(QPoint(0, 0))
             # Get the size of the Scrcpy container widget (this is the available space)
@@ -1173,11 +1386,15 @@ class MyQtApp(QMainWindow):
             overlay_x = global_pos.x() + offset_x
             overlay_y = global_pos.y() + offset_y
 
-            self.global_overlay.setGeometry(
+            active_overlay_to_move.setGeometry(
                 overlay_x, overlay_y, active_display_width, active_display_height
             )
-            self.global_overlay.raise_()  # Ensure it's on top of all other windows
-            self.global_overlay.show()
+            active_overlay_to_move.raise_()  # Ensure it's on top of all other windows
+            # The show/hide logic is now handled in toggle_edit_mode, so no explicit show here.
+            # However, if it's currently visible due to toggle_edit_mode, ensure it remains visible.
+            if active_overlay_to_move.isHidden(): # This check helps prevent unnecessary flashes if already visible
+                 active_overlay_to_move.show()
+
 
             print(
                 f"Overlay Geometry Set: x={overlay_x}, y={overlay_y}, w={active_display_width}, h={active_display_height}")
@@ -1185,9 +1402,10 @@ class MyQtApp(QMainWindow):
             print(f"Calculated Active Display: w={active_display_width}, h={active_display_height}")
 
         else:
-            # If no Scrcpy page is active, hide the overlay
-            self.global_overlay.hide()
-            print("Global overlay hidden (no active Scrcpy page).")
+            # If no Scrcpy page is active, hide both overlays
+            self.play_overlay.hide()
+            self.edit_overlay.hide()
+            print("Both overlays hidden (no active Scrcpy page).")
 
     def keyPressEvent(self, event: QKeyEvent):
         """
@@ -1202,8 +1420,8 @@ class MyQtApp(QMainWindow):
                 return
 
             # In play mode, check if the pressed key matches any keymap's assigned key.
-            # We only support single-key triggers for now.
-            for keymap in self.global_overlay.keymaps:
+            # We use the shared keymaps list directly.
+            for keymap in self.current_instance_keymaps:
                 # Assuming keymap.keycombo only has one element for simplicity based on previous implementation
                 if len(keymap.keycombo) == 1 and event.key() == keymap.keycombo[0]:
                     # Calculate position and size in Scrcpy's native resolution (1920x1080)
@@ -1226,19 +1444,19 @@ class MyQtApp(QMainWindow):
             # If no keymap was activated, let the event propagate normally (e.g., to Scrcpy if possible).
             super().keyPressEvent(event)
         else:
-            # In edit mode, forward the key press event to the global overlay
+            # In edit mode, forward the key press event to the edit overlay
             # so it can handle setting key combos or deleting keymaps.
-            self.global_overlay.keyPressEvent(event)
+            self.edit_overlay.keyPressEvent(event)
             event.accept()  # Assume the overlay handles it if in edit mode
             return
 
     def closeEvent(self, event):
         print("Closing application, stopping all Scrcpy processes...")
-        # Hide the global overlay explicitly before closing
-        self.global_overlay.hide()
-        # It's good practice to close/delete the overlay if it's a top-level window
-        # when the main application closes to ensure all resources are released.
-        self.global_overlay.deleteLater()
+        # Hide and delete both overlays explicitly before closing
+        self.play_overlay.hide()
+        self.edit_overlay.hide()
+        self.play_overlay.deleteLater()
+        self.edit_overlay.deleteLater()
 
         for page in self.main_content_pages:
             page.stop_scrcpy()
