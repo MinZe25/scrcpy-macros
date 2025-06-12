@@ -151,11 +151,6 @@ class SettingsDialog(QDialog):
         layout.addRow("Resolution (WxH):", resolution_field)
         tab_page.resolution_field = resolution_field
 
-        density_spinbox = QSpinBox()
-        density_spinbox.setRange(100, 600)
-        density_spinbox.setValue(settings.get("density", 333))
-        layout.addRow("Screen Density:", density_spinbox)
-        tab_page.density_field = density_spinbox
 
         # --- App & Window Settings ---
         start_app_field = QLineEdit(settings.get("start_app", "com.ankama.dofustouch"))
@@ -214,7 +209,6 @@ class SettingsDialog(QDialog):
                 "video_codec": tab.video_codec_field.currentText(),
                 "max_fps": tab.max_fps_field.value(),
                 "resolution": tab.resolution_field.text(),
-                "density": tab.density_field.value(),
                 "start_app": tab.start_app_field.text(),
                 "turn_screen_off": tab.turn_screen_off_field.isChecked(),
                 "no_decorations": tab.no_decorations_field.isChecked(),
@@ -251,7 +245,6 @@ if __name__ == '__main__':
             "video_codec": "h265",
             "max_fps": 60,
             "resolution": "1920x1080",
-            "density": 320,
             "start_app": "com.ankama.dofustouch",
             "turn_screen_off": True,
             "no_decorations": False
@@ -263,7 +256,6 @@ if __name__ == '__main__':
             "video_codec": "h264",
             "max_fps": 30,
             "resolution": "1280x720",
-            "density": 240,
             "start_app": "com.android.settings",
             "turn_screen_off": False,
             "no_decorations": True
