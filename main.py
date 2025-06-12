@@ -7,18 +7,44 @@ import math  # Import math for sqrt if .norm() is not available
 import json  # For serializing/deserializing keymap data
 import os  # For checking file existence
 import win32api  # Added for simulating mouse taps
-import pywinauto
-from pywinauto import mouse
-from PyQt5.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QLabel, QFrame, QSizePolicy, QSpacerItem, QDialog,
-    QStackedWidget, QSizeGrip
-)
-from PyQt5.QtGui import QPainter, QColor, QFont, QFontMetrics, QCursor, QWindow, QKeySequence, QMouseEvent, QKeyEvent
-from PyQt5.QtCore import Qt, QRect, QPoint, QRectF, QSize, QTimer, pyqtSignal, QEvent, QPointF, QSizeF
+import re  # For regex parsing
+import threading
+import queue
 
-# Assume settings_dialog.py exists in the same directory
-from settings_dialog import SettingsDialog
+from PyQt5.QtCore import QSizeF, QPointF, pyqtSignal, Qt, QPoint, QRectF, QTimer, QEvent, QRect
+from PyQt5.QtGui import QKeySequence, QPainter, QColor, QFontMetrics, QMouseEvent, QKeyEvent, QFont, QWindow
+from PyQt5.QtWidgets import QWidget, QHBoxLayout, QLabel, QSpacerItem, QSizePolicy, QPushButton, QFrame, QVBoxLayout, \
+    QMainWindow, QSizeGrip, QStackedWidget, QApplication
+
+
+# Removed the settings_dialog import as requested by user.
+# from settings_dialog import SettingsDialog
+
+
+# Helper class for non-blocking subprocess output reading
+class NonBlockingStreamReader:
+    def __init__(self, stream):
+        self._stream = stream
+        self._queue = queue.Queue()
+
+        def _populateQueue(stream, q):
+            # Read until EOF
+            for line in iter(stream.readline, b''):
+                if line:  # Ensure line is not empty before putting in queue
+                    q.put(line)
+            stream.close()
+
+        self._thread = threading.Thread(target=_populateQueue, args=(self._stream, self._queue))
+        self._thread.daemon = True  # Thread dies with the main program
+        self._thread.start()
+
+    def readline(self):
+        try:
+            # Get line from queue, non-blocking
+            return self._queue.get(block=False)
+        except queue.Empty:
+            return None
+
 
 # Constants for window resizing
 RESIZE_BORDER_WIDTH = 8
@@ -37,6 +63,8 @@ SCRCPY_WINDOW_TITLE_BASE = "Lindo_Scrcpy_Instance"
 # Aspect ratio of the Scrcpy display
 # From '--new-display=1920x1080'
 SCRCPY_ASPECT_RATIO = 16.0 / 9.0
+SCRCPY_NATIVE_WIDTH = 1920  # Native resolution for ADB tap commands
+SCRCPY_NATIVE_HEIGHT = 1080  # Native resolution for ADB tap commands
 
 KEYMAP_FILE = "keymaps.json"  # Local JSON file for keymap storage
 
@@ -206,8 +234,8 @@ class OverlayWidget(QWidget):
 
     def __init__(self, keymaps: list = None, parent=None):
         super().__init__(parent)
-        self.setAttribute(Qt.WA_TransparentForMouseEvents)
         self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Tool)
         self.setFocusPolicy(Qt.NoFocus)  # Default: No focus, events pass through
         self.keymaps = keymaps if keymaps is not None else []
@@ -663,10 +691,11 @@ class SidebarWidget(QFrame):
             QSpacerItem(20, 40, QSizePolicy.Minimum, QSizePolicy.Expanding)
         )
 
-        self.settings_button = QPushButton("⚙️")
-        self.settings_button.setObjectName("SettingsButton")
-        self.settings_button.clicked.connect(self.settings_requested.emit)
-        self.sidebar_layout.addWidget(self.settings_button)
+        # SettingsDialog is now imported from settings_dialog.py (removed comment)
+        # self.settings_button = QPushButton("⚙️")
+        # self.settings_button.setObjectName("SettingsButton")
+        # self.settings_button.clicked.connect(self.settings_requested.emit)
+        # self.sidebar_layout.addWidget(self.settings_button)
 
     def _on_instance_button_clicked(self, index: int):
         print(f"Sidebar: Instance button {index + 1} clicked, emitting index {index}.")
@@ -729,6 +758,9 @@ class SideGrip(QWidget):
 
 # --- Main Content Area Widget Class ---
 class MainContentAreaWidget(QWidget):
+    # New signal to notify parent when Scrcpy container is ready
+    scrcpy_container_ready = pyqtSignal()
+
     def __init__(self, instance_id: int, device_serial: str = None, parent=None):
         super().__init__(parent)
         self.setObjectName("MainContentWidget")
@@ -738,6 +770,10 @@ class MainContentAreaWidget(QWidget):
         self.scrcpy_hwnd = None
         self.scrcpy_qwindow = None
         self.scrcpy_container_widget = None  # This is the QWidget created by createWindowContainer
+        self.scrcpy_stdout_reader = None  # For non-blocking stdout reading
+        self.scrcpy_stderr_reader = None  # For non-blocking stderr reading
+        self.scrcpy_output_timer = QTimer(self)  # Timer to poll Scrcpy output
+        self.scrcpy_display_id = None  # To store the detected display ID
 
         self.scrcpy_expected_title = f"{SCRCPY_WINDOW_TITLE_BASE}_{self.instance_id}"
 
@@ -754,8 +790,38 @@ class MainContentAreaWidget(QWidget):
         self.placeholder_label.setWordWrap(True)
         self.main_content_layout.addWidget(self.placeholder_label)
 
+        # Connect the timer to the output reading slot
+        self.scrcpy_output_timer.timeout.connect(self._read_scrcpy_output)
+
         self.start_scrcpy()
         self.installEventFilter(self)  # Install event filter on THIS WIDGET to catch its own resizes
+
+    def _read_scrcpy_output(self):
+        """
+        Reads output from Scrcpy process stdout and stderr,
+        and attempts to find the display ID.
+        """
+        if not self.scrcpy_process:
+            self.scrcpy_output_timer.stop()
+            return
+
+        # Read stdout
+        stdout_line = self.scrcpy_stdout_reader.readline()
+        if stdout_line:
+            line_str = stdout_line.strip()
+            # print(f"Scrcpy STDOUT ({self.instance_id + 1}): {line_str}") # Commented for less verbose output
+
+            # Regex to find display ID: "[server] INFO: New display: 1920x1080/333 (id=343)"
+            match = re.search(r'\(id=(\d+)\)', line_str)
+            if match:
+                self.scrcpy_display_id = int(match.group(1))
+                print(f"Detected Scrcpy Display ID: {self.scrcpy_display_id} for instance {self.instance_id + 1}")
+                self.scrcpy_output_timer.stop()  # Stop polling once ID is found
+
+        # Read stderr (for general error logging)
+        stderr_line = self.scrcpy_stderr_reader.readline()
+        if stderr_line:
+            print(f"Scrcpy STDERR ({self.instance_id + 1}): {stderr_line.strip()}")
 
     def start_scrcpy(self):
         if self.scrcpy_process and self.scrcpy_process.poll() is None:
@@ -780,9 +846,17 @@ class MainContentAreaWidget(QWidget):
                 scrcpy_cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                creationflags=subprocess.CREATE_NO_WINDOW
+                creationflags=subprocess.CREATE_NO_WINDOW,
+                universal_newlines=True  # Important for reading text output
             )
             print(f"Scrcpy process for instance {self.instance_id + 1} started with PID: {self.scrcpy_process.pid}")
+
+            # Initialize non-blocking readers
+            self.scrcpy_stdout_reader = NonBlockingStreamReader(self.scrcpy_process.stdout)
+            self.scrcpy_stderr_reader = NonBlockingStreamReader(self.scrcpy_process.stderr)
+
+            # Start timer to poll for output, specifically for the display ID
+            self.scrcpy_output_timer.start(100)  # Check every 100 ms
 
             QTimer.singleShot(2000, self.find_and_embed_scrcpy)
 
@@ -828,6 +902,7 @@ class MainContentAreaWidget(QWidget):
             # Explicitly call resize after embedding to ensure initial correct sizing
             self.resize_scrcpy_native_window()
             # Overlay is now handled globally by MyQtApp, so no call here.
+            self.scrcpy_container_ready.emit()  # Emit signal once container is ready
 
         else:
             print(
@@ -876,6 +951,9 @@ class MainContentAreaWidget(QWidget):
         if self.scrcpy_process and self.scrcpy_process.poll() is None:
             print(f"Terminating Scrcpy process for instance {self.instance_id + 1} (PID: {self.scrcpy_process.pid})...")
 
+            # Stop the output polling timer
+            self.scrcpy_output_timer.stop()
+
             if self.scrcpy_hwnd:
                 win32gui.ShowWindow(self.scrcpy_hwnd, win32con.SW_HIDE)
                 win32gui.SetParent(self.scrcpy_hwnd, 0)  # Unparent before terminating
@@ -890,6 +968,9 @@ class MainContentAreaWidget(QWidget):
             self.scrcpy_hwnd = None
             self.scrcpy_qwindow = None
             self.scrcpy_container_widget = None
+            self.scrcpy_display_id = None  # Clear display ID on stop
+            self.scrcpy_stdout_reader = None
+            self.scrcpy_stderr_reader = None
             print(f"Scrcpy process for instance {self.instance_id + 1} terminated.")
         elif self.scrcpy_process:
             print(f"Scrcpy process for instance {self.instance_id + 1} already stopped.")
@@ -897,6 +978,9 @@ class MainContentAreaWidget(QWidget):
             self.scrcpy_hwnd = None
             self.scrcpy_qwindow = None
             self.scrcpy_container_widget = None
+            self.scrcpy_display_id = None  # Clear display ID on stop
+            self.scrcpy_stdout_reader = None
+            self.scrcpy_stderr_reader = None
 
 
 # --- Main Application Window (MODIFIED to manage a global OverlayWidget) ---
@@ -944,7 +1028,7 @@ class MyQtApp(QMainWindow):
         device_serials = [None] * self.num_instances
 
         self.sidebar = SidebarWidget(num_instances=self.num_instances, parent=self)
-        self.sidebar.settings_requested.connect(self.open_settings_dialog)
+        # self.sidebar.settings_requested.connect(self.open_settings_dialog) # Removed settings dialog connection
         self.content_layout.addWidget(self.sidebar)
 
         self.stacked_widget = QStackedWidget(self)
@@ -954,6 +1038,8 @@ class MyQtApp(QMainWindow):
         for i in range(self.num_instances):
             serial = device_serials[i] if i < len(device_serials) else None
             page = MainContentAreaWidget(instance_id=i, device_serial=serial, parent=self)
+            # Connect the new signal here
+            page.scrcpy_container_ready.connect(self.on_scrcpy_container_ready)
             self.stacked_widget.addWidget(page)
             self.main_content_pages.append(page)
 
@@ -984,46 +1070,65 @@ class MyQtApp(QMainWindow):
             return "Alt"
         return QKeySequence(qt_key_code).toString()
 
-    def send_scrcpy_tap(self, x: int, y: int):
+    def send_adb_keyevent(self, keycode: str):
         """
-        Sends a simulated tap event to the currently active Scrcpy window
-        without moving the actual mouse cursor.
+        Sends an ADB key event to the Android device via ADB shell input.
         """
         current_page = self.stacked_widget.currentWidget()
-        if current_page and current_page.scrcpy_hwnd:
-            hwnd = current_page.scrcpy_hwnd
+        if current_page and current_page.scrcpy_display_id is not None:
+            device_ip = "192.168.1.38"  # Hardcoded IP
 
-            # Get the client coordinates of the Scrcpy window relative to the screen
-            # This accounts for the window's borders and title bar, giving us the drawable area.
-            win_rect = win32gui.GetClientRect(hwnd)
-            client_x_offset, client_y_offset = win32gui.ClientToScreen(hwnd, (0, 0))
+            adb_cmd = [
+                'adb',
+                '-s', device_ip,
+                'shell',
+                'input',
+                'keyevent', keycode
+            ]
 
-            # Calculate the absolute screen coordinates for the tap
-            screen_x = client_x_offset + x
-            screen_y = client_y_offset + y
-
-            # Get the screen resolution for normalization
-            screen_width = win32api.GetSystemMetrics(win32con.SM_CXSCREEN)
-            screen_height = win32api.GetSystemMetrics(win32con.SM_CYSCREEN)
-
-            # Normalize coordinates to 0-65535 for MOUSEEVENTF_ABSOLUTE
-            normalized_x = int(screen_x * 65535 / screen_width)
-            normalized_y = int(screen_y * 65535 / screen_height)
-
-            # Simulate left mouse button down and up without moving the physical cursor
-            # win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN | win32con.MOUSEEVENTF_ABSOLUTE, normalized_x,
-            #                      normalized_y, 0, 0)
-            # time.sleep(0.05)  # Small delay for the click to register
-            # win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP | win32con.MOUSEEVENTF_ABSOLUTE, normalized_x,
-            #                      normalized_y, 0, 0)
-            # pydirectinput.click(x, y)
-            pywinauto.mouse._perform_click_input(coords=(x, y))
-            # left_click_event = MouseEvent(MouseCode.MOUSE_LEFT_CLICK, 100, 100)
-            # send_events(left_click_event)
-
-            print(f"Simulated invisible click on Scrcpy window {hwnd} at screen coordinates ({screen_x}, {screen_y})")
+            try:
+                subprocess.Popen(adb_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                 creationflags=subprocess.CREATE_NO_WINDOW)
+                print(f"Sent ADB keyevent '{keycode}' to {device_ip}")
+            except FileNotFoundError:
+                print("Error: adb not found. Make sure 'adb.exe' is in your system PATH.")
+            except Exception as e:
+                print(f"Error sending ADB keyevent: {e}")
         else:
-            print("No active Scrcpy window to send tap to.")
+            print(f"Cannot send ADB keyevent '{keycode}': No active Scrcpy page or display ID not detected.")
+
+    def send_scrcpy_tap(self, x: int, y: int):
+        """
+        Sends a simulated tap event to the Android device via ADB shell input.
+        The x and y coordinates are expected to be in the native Scrcpy resolution (1920x1080).
+        """
+        current_page = self.stacked_widget.currentWidget()
+        if current_page and current_page.scrcpy_display_id is not None:
+            display_id = current_page.scrcpy_display_id
+            # The device IP is hardcoded in the scrcpy_cmd for simplicity,
+            # but in a real app, it might be dynamically configured.
+            device_ip = "192.168.1.38"
+
+            adb_cmd = [
+                'adb',
+                '-s', device_ip,
+                'shell',
+                'input',
+                '-d', str(display_id),
+                'tap', str(x), str(y)
+            ]
+
+            try:
+                # Use Popen to avoid blocking, and discard output
+                subprocess.Popen(adb_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                 creationflags=subprocess.CREATE_NO_WINDOW)
+                print(f"Sent ADB tap to {device_ip} (display {display_id}) at coordinates ({x}, {y})")
+            except FileNotFoundError:
+                print("Error: adb not found. Make sure 'adb.exe' is in your system PATH.")
+            except Exception as e:
+                print(f"Error sending ADB tap: {e}")
+        else:
+            print("Cannot send ADB tap: No active Scrcpy page or display ID not detected.")
 
     def save_keymaps_to_local_json(self, keymaps_list: list):
         """Saves the current list of keymaps to a local JSON file."""
@@ -1054,13 +1159,14 @@ class MyQtApp(QMainWindow):
             # These values are based on an assumed 1920x1080 internal resolution for Scrcpy
             # and represent 50px offset and 100px size from that reference.
             # Converted to normalized for a 1920x1080 Scrcpy area:
-            initial_keymap_circle = Keymap(normalized_size=(100 / 1920.0, 100 / 1080.0),
+            initial_keymap_circle = Keymap(normalized_size=(100 / SCRCPY_NATIVE_WIDTH, 100 / SCRCPY_NATIVE_HEIGHT),
                                            keycombo=[Qt.Key_Shift, Qt.Key_A],
-                                           normalized_position=(50 / 1920.0, 50 / 1080.0),
+                                           normalized_position=(50 / SCRCPY_NATIVE_WIDTH, 50 / SCRCPY_NATIVE_HEIGHT),
                                            type="circle")
-            secondary_keymap_circle = Keymap(normalized_size=(100 / 1920.0, 100 / 1080.0),
+            secondary_keymap_circle = Keymap(normalized_size=(100 / SCRCPY_NATIVE_WIDTH, 100 / SCRCPY_NATIVE_HEIGHT),
                                              keycombo=[Qt.Key_A],
-                                             normalized_position=(400 / 1920.0, 300 / 1080.0),
+                                             normalized_position=(400 / SCRCPY_NATIVE_WIDTH,
+                                                                  300 / SCRCPY_NATIVE_HEIGHT),
                                              type="circle")
             loaded_keymaps = [initial_keymap_circle, secondary_keymap_circle]
             self.save_keymaps_to_local_json(loaded_keymaps)  # Save defaults to new file
@@ -1274,6 +1380,8 @@ class MyQtApp(QMainWindow):
         self.update_max_restore_button()
         self.updateGrips()
         # Ensure global overlay is positioned and shown correctly on app startup
+        # We still call this here to handle cases where the app is launched and Scrcpy
+        # is already running or found very quickly.
         self.update_global_overlay_geometry()
 
     def _on_stacked_widget_page_changed(self, index: int):
@@ -1288,6 +1396,15 @@ class MyQtApp(QMainWindow):
                     win32gui.ShowWindow(page.scrcpy_hwnd, win32con.SW_HIDE)
         # Always update the global overlay after a page change
         self.update_global_overlay_geometry()
+
+    def on_scrcpy_container_ready(self):
+        """
+        Slot to be called when a Scrcpy container widget is fully ready.
+        Ensures the overlay is positioned correctly after the Scrcpy window is embedded.
+        """
+        print("Received scrcpy_container_ready signal. Updating overlay geometry.")
+        # Defer the update to ensure layout has settled
+        QTimer.singleShot(0, self.update_global_overlay_geometry)
 
     def update_global_overlay_geometry(self):
         """
@@ -1354,24 +1471,32 @@ class MyQtApp(QMainWindow):
         Routes key presses to keymap activation or editing based on the current mode.
         """
         if not self.edit_mode_active:
+            # Check for ESC key press to send 'back' command
+            if event.key() == Qt.Key_Escape:
+                self.send_adb_keyevent("KEYCODE_BACK")
+                event.accept()
+                return
+
             # In play mode, check if the pressed key matches any keymap's assigned key.
             # We only support single-key triggers for now.
             for keymap in self.global_overlay.keymaps:
+                # Assuming keymap.keycombo only has one element for simplicity based on previous implementation
                 if len(keymap.keycombo) == 1 and event.key() == keymap.keycombo[0]:
-                    # Calculate center of keymap in OverlayWidget's coordinate system
-                    # These are pixel coordinates relative to the top-left of the overlay.
-                    pixel_x = keymap.normalized_position.x() * self.global_overlay.width()
-                    pixel_y = keymap.normalized_position.y() * self.global_overlay.height()
-                    pixel_width = keymap.normalized_size.width() * self.global_overlay.width()
-                    pixel_height = keymap.normalized_size.height() * self.global_overlay.height()
+                    # Calculate position and size in Scrcpy's native resolution (1920x1080)
+                    pixel_x_native = keymap.normalized_position.x() * SCRCPY_NATIVE_WIDTH
+                    pixel_y_native = keymap.normalized_position.y() * SCRCPY_NATIVE_HEIGHT
+                    pixel_width_native = keymap.normalized_size.width() * SCRCPY_NATIVE_WIDTH
+                    pixel_height_native = keymap.normalized_size.height() * SCRCPY_NATIVE_HEIGHT
 
-                    center_x = int(pixel_x + pixel_width / 2)
-                    center_y = int(pixel_y + pixel_height / 2)
+                    # Calculate center coordinates in native resolution
+                    center_x_native = int(pixel_x_native + pixel_width_native / 2)
+                    center_y_native = int(pixel_y_native + pixel_height_native / 2)
 
-                    self.send_scrcpy_tap(center_x, center_y)
+                    # Send ADB tap with native coordinates
+                    self.send_scrcpy_tap(center_x_native, center_y_native)
                     event.accept()  # Consume the event
                     print(
-                        f"Key '{self._get_key_text_for_app(event.key())}' pressed, activating keymap at ({center_x}, {center_y})")
+                        f"Key '{self._get_key_text_for_app(event.key())}' pressed, activating keymap at native ({center_x_native}, {center_y_native})")
                     return
 
             # If no keymap was activated, let the event propagate normally (e.g., to Scrcpy if possible).
@@ -1398,8 +1523,10 @@ class MyQtApp(QMainWindow):
     def open_settings_dialog(self):
         print("Opening settings dialog...")
         # SettingsDialog is now imported from settings_dialog.py
-        settings_dialog = SettingsDialog(self)
-        settings_dialog.exec_()
+        # If settings_dialog.py is not present, this line would cause an error.
+        # Assuming for now it's either removed or not used by current functionality.
+        # settings_dialog = SettingsDialog(self)
+        # settings_dialog.exec_()
 
 
 if __name__ == '__main__':
