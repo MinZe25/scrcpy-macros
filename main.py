@@ -68,122 +68,8 @@ SCRCPY_NATIVE_HEIGHT = 1080  # Native resolution for ADB tap commands
 
 KEYMAP_FILE = "keymaps.json"  # Local JSON file for keymap storage
 
+
 # --- Global Stylesheet ---
-GLOBAL_STYLESHEET = """
-QMainWindow {
-    /* Styles for child widgets inside QMainWindow that are not handled by custom classes */
-}
-
-/* Custom Title Bar Styling */
-#TitleBar {
-    background-color: #21222C; /* Slightly darker than main window */
-    border-top-left-radius: 10px; /* Still apply here for the visual look of the bar */
-    border-top-right-radius: 10px;
-}
-
-#TitleBar QLabel {
-    color: #f8f8f2; /* White text */
-    padding-left: 10px;
-    font-size: 14px;
-    font-weight: bold;
-}
-
-#TitleBar QPushButton {
-    background-color: #333642; /* Make button background visible even when not hovered */
-    border: none;
-    padding: 5px;
-    border-radius: 5px;
-    color: #f8f8f2;
-    font-size: 16px;
-    min-width: 30px; /* Ensure clickability */
-    min-height: 30px;
-}
-
-#TitleBar QPushButton:hover {
-    background-color: #44475a; /* Lighter on hover */
-}
-
-/* Close button specific styling for a distinct look */
-#TitleBar QPushButton#CloseButton:hover {
-    background-color: #ff5555; /* Red on hover */
-}
-
-/* Sidebar Styling */
-#SidebarFrame { /* Using objectName for the frame */
-    background-color: #21222C; /* Darker than main window */
-    border-bottom-left-radius: 10px; /* Match main window's bottom left */
-    padding: 5px;
-}
-
-#SidebarButton { /* For instance buttons */
-    background-color: #44475a; /* Slightly lighter than sidebar background */
-    color: #f8f8f2;
-    border: none;
-    border-radius: 8px; /* Rounded buttons */
-    min-width: 40px;
-    max-width: 40px;
-    min-height: 40px;
-    max-height: 40px;
-    font-size: 18px; /* Example icon size */
-    margin: 5px; /* Spacing between buttons */
-}
-
-#SidebarButton:hover {
-    background-color: #6272a4; /* Dracula purple on hover */
-}
-
-#SidebarButton:pressed {
-    background-color: #bd93f9; /* Lighter purple on pressed */
-}
-
-#SettingsButton { /* For the settings button */
-    background-color: #44475a;
-    color: #f8f8f2;
-    border: none;
-    border-radius: 8px;
-    min-width: 40px;
-    max-width: 40px;
-    min-height: 40px;
-    max-height: 40px;
-    font-size: 18px;
-    margin: 5px;
-}
-
-#SettingsButton:hover {
-    background-color: #6272a4;
-}
-
-#SettingsButton:pressed {
-    background-color: #bd93f9;
-}
-
-/* Main Content Area Styling */
-#MainContentWidget { /* Using objectName for the main content widget */
-    background-color: #282a36; /* Same as main window for seamless look */
-    border-bottom-right-radius: 10px;
-}
-
-/* Specific styling for the QLabel within MainContentAreaWidget instances */
-#MainContentWidget QLabel {
-    background-color: #383a59; /* Slightly different dark shade */
-    border: 2px dashed #f8f8f2;
-    border-radius: 8px;
-    color: #f8f8f2;
-    font-size: 16px;
-    padding: 20px;
-}
-
-/* Generic QDialog Styling (for settings dialog) */
-QDialog {
-    background-color: #282a36;
-    border: 1px solid #6272a4;
-    border-radius: 10px;
-    color: #f8f8f2;
-}
-QDialog QLabel {
-    color: #f8f8f2;
-}
-"""
 
 
 # --- Keymap Class ---
@@ -239,7 +125,6 @@ class OverlayWidget(QWidget):
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Tool)
         self.setFocusPolicy(Qt.NoFocus)  # Default: No focus, events pass through
         self.keymaps = keymaps if keymaps is not None else []
-
         self.edit_mode_active = False
         self._dragging_keymap = None
         self._creating_keymap = False
@@ -273,7 +158,7 @@ class OverlayWidget(QWidget):
         # Make the overlay transparent to mouse events when not in edit mode,
         # so clicks go through to the Scrcpy window.
         # When active, it should capture mouse events.
-        self.setAttribute(Qt.WA_TransparentForMouseEvents, not active)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, False)
 
         # Set focus policy to allow key events when in edit mode
         # When not active, we want the main window to handle key presses for keymap activation.
@@ -626,47 +511,6 @@ class OverlayWidget(QWidget):
             super().keyPressEvent(event)  # Pass event if no keymap is selected for editing
 
 
-# --- Custom Title Bar Class ---
-# class CustomTitleBar(QWidget):
-#     def __init__(self, parent):
-#         super().__init__(parent)
-#         self.parent_window = parent
-#         self.setObjectName("TitleBar")
-#
-#         self.setFixedHeight(35)
-#
-#         self.layout = QHBoxLayout(self)
-#         self.layout.setContentsMargins(0, 0, 0, 0)
-#         self.layout.setSpacing(0)
-#
-#         self.app_icon = QLabel("Bonito")
-#         self.app_icon.setFont(QFont("Inter", 16))
-#         self.layout.addWidget(self.app_icon)
-#
-#         self.layout.addSpacerItem(QSpacerItem(40, 20, QSizePolicy.Expanding, QSizePolicy.Minimum))
-#
-#         # Change button text and connect to new toggle method
-#         self.edit_button = QPushButton("Edit")
-#         self.edit_button.setObjectName("EditButton")  # Changed ID
-#         self.edit_button.clicked.connect(self.parent_window.toggle_edit_mode)
-#         self.layout.addWidget(self.edit_button)
-#
-#         self.min_button = QPushButton("─")
-#         self.min_button.setObjectName("MinimizeButton")
-#         self.min_button.clicked.connect(self.parent_window.showMinimized)
-#         self.layout.addWidget(self.min_button)
-#
-#         self.max_button = QPushButton("⬜")
-#         self.max_button.setObjectName("MaximizeButton")
-#         self.max_button.clicked.connect(self.parent_window.toggle_maximize_restore)
-#         self.layout.addWidget(self.max_button)
-#
-#         self.close_button = QPushButton("✕")
-#         self.close_button.setObjectName("CloseButton")
-#         self.close_button.clicked.connect(self.parent_window.close)
-#         self.layout.addWidget(self.close_button)
-
-
 # --- Sidebar Widget Class ---
 class SidebarWidget(QFrame):
     settings_requested = pyqtSignal()
@@ -708,60 +552,6 @@ class SidebarWidget(QFrame):
     def _on_instance_button_clicked(self, index: int):
         print(f"Sidebar: Instance button {index + 1} clicked, emitting index {index}.")
         self.instance_selected.emit(index)
-
-
-class SideGrip(QWidget):
-    def __init__(self, parent, edge):
-        QWidget.__init__(self, parent)
-        if edge == Qt.LeftEdge:
-            self.setCursor(Qt.SizeHorCursor)
-            self.resizeFunc = self.resizeLeft
-        elif edge == Qt.TopEdge:
-            self.setCursor(Qt.SizeVerCursor)
-            self.resizeFunc = self.resizeTop
-        elif edge == Qt.RightEdge:
-            self.setCursor(Qt.SizeHorCursor)
-            self.resizeFunc = self.resizeRight
-        else:
-            self.setCursor(Qt.SizeVerCursor)
-            self.resizeFunc = self.resizeBottom
-        self.mousePos = None
-
-    def resizeLeft(self, delta):
-        window = self.window()
-        width = max(window.minimumWidth(), window.width() - delta.x())
-        geo = window.geometry()
-        geo.setLeft(geo.right() - width)
-        window.setGeometry(geo)
-
-    def resizeTop(self, delta):
-        window = self.window()
-        height = max(window.minimumHeight(), window.height() - delta.y())
-        geo = window.geometry()
-        geo.setTop(geo.bottom() - height)
-        window.setGeometry(geo)
-
-    def resizeRight(self, delta):
-        window = self.window()
-        width = max(window.minimumWidth(), window.width() + delta.x())
-        window.resize(width, window.height())
-
-    def resizeBottom(self, delta):
-        window = self.window()
-        height = max(window.minimumHeight(), window.height() + delta.y())
-        window.resize(window.width(), height)
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            self.mousePos = event.pos()
-
-    def mouseMoveEvent(self, event):
-        if self.mousePos is not None:
-            delta = event.pos() - self.mousePos
-            self.resizeFunc(delta)
-
-    def mouseReleaseEvent(self, event):
-        self.mousePos = None
 
 
 # --- Main Content Area Widget Class ---
@@ -999,24 +789,9 @@ class MyQtApp(QMainWindow):
         super().__init__()
         self.setWindowTitle("Bonito Integrated Controller")
         self.setGeometry(100, 100, 1200, 800)
-        # Removed: self.setWindowFlags(Qt.FramelessWindowHint)
 
-        # Original grip logic remains commented out
-        # self.sideGrips = [
-        #     SideGrip(self, Qt.LeftEdge),
-        #     SideGrip(self, Qt.TopEdge),
-        #     SideGrip(self, Qt.RightEdge),
-        #     SideGrip(self, Qt.BottomEdge),
-        # ]
-        # self.cornerGrips = [QSizeGrip(self) for i in range(4)]
+        self.setStyleSheet(self.load_stylesheet_from_file("./style.css"))
 
-        self.setStyleSheet(GLOBAL_STYLESHEET)
-
-        # Removed custom move/resize attributes
-        # self._resizing = False
-        # self._moving = False
-        # self._drag_position = None
-        # self._resize_mode = None
         self.setMouseTracking(True)  # Still useful for potential future custom interactions
         self.edit_mode_active = False  # New state for edit mode
 
@@ -1025,10 +800,6 @@ class MyQtApp(QMainWindow):
         self.main_layout = QVBoxLayout(self.main_widget)
         self.main_layout.setContentsMargins(0, 0, 0, 0)
         self.main_layout.setSpacing(0)
-
-        # CustomTitleBar remains commented out as requested
-        # self.title_bar = CustomTitleBar(self)
-        # self.main_layout.addWidget(self.title_bar)
 
         self.content_layout = QHBoxLayout()
         self.content_layout.setContentsMargins(0, 0, 0, 0)
@@ -1072,6 +843,27 @@ class MyQtApp(QMainWindow):
 
         # Load keymaps from local JSON after overlay is set up
         self.load_keymaps_from_local_json()
+
+    def load_stylesheet_from_file(self, filepath: str) -> str:
+        """
+        Loads a stylesheet from a given file path and returns its content as a string.
+
+        Args:
+            filepath (str): The path to the CSS file.
+
+        Returns:
+            str: The content of the CSS file, or an empty string if the file is not found.
+        """
+        if not os.path.exists(filepath):
+            print(f"Warning: Stylesheet file not found at {filepath}")
+            return ""
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                stylesheet_content = f.read()
+            return stylesheet_content
+        except Exception as e:
+            print(f"Error loading stylesheet from {filepath}: {e}")
+            return ""
 
     def _get_key_text_for_app(self, qt_key_code: int) -> str:
         """Helper to convert Qt.Key code to its string representation for display/logging."""
@@ -1286,8 +1078,7 @@ class MyQtApp(QMainWindow):
     # New: Override moveEvent to update overlay position
     def moveEvent(self, event):
         super().moveEvent(event)
-        self.update_global_overlay_geometry() # Ensure overlay moves with the main window
-
+        self.update_global_overlay_geometry()  # Ensure overlay moves with the main window
 
     def paintEvent(self, event):
         painter = QPainter(self)

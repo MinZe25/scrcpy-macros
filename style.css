@@ -1,0 +1,113 @@
+QMainWindow {
+    /* Styles for child widgets inside QMainWindow that are not handled by custom classes */
+}
+
+/* Custom Title Bar Styling */
+#TitleBar {
+    background-color: #21222C; /* Slightly darker than main window */
+    border-top-left-radius: 10px; /* Still apply here for the visual look of the bar */
+    border-top-right-radius: 10px;
+}
+
+#TitleBar QLabel {
+    color: #f8f8f2; /* White text */
+    padding-left: 10px;
+    font-size: 14px;
+    font-weight: bold;
+}
+
+#TitleBar QPushButton {
+    background-color: #333642; /* Make button background visible even when not hovered */
+    border: none;
+    padding: 5px;
+    border-radius: 5px;
+    color: #f8f8f2;
+    font-size: 16px;
+    min-width: 30px; /* Ensure clickability */
+    min-height: 30px;
+}
+
+#TitleBar QPushButton:hover {
+    background-color: #44475a; /* Lighter on hover */
+}
+
+/* Close button specific styling for a distinct look */
+#TitleBar QPushButton#CloseButton:hover {
+    background-color: #ff5555; /* Red on hover */
+}
+
+/* Sidebar Styling */
+#SidebarFrame { /* Using objectName for the frame */
+    background-color: #21222C; /* Darker than main window */
+    border-bottom-left-radius: 10px; /* Match main window's bottom left */
+    padding: 5px;
+}
+
+#SidebarButton { /* For instance buttons */
+    background-color: #44475a; /* Slightly lighter than sidebar background */
+    color: #f8f8f2;
+    border: none;
+    border-radius: 8px; /* Rounded buttons */
+    min-width: 40px;
+    max-width: 40px;
+    min-height: 40px;
+    max-height: 40px;
+    font-size: 18px; /* Example icon size */
+    margin: 5px; /* Spacing between buttons */
+}
+
+#SidebarButton:hover {
+    background-color: #6272a4; /* Dracula purple on hover */
+}
+
+#SidebarButton:pressed {
+    background-color: #bd93f9; /* Lighter purple on pressed */
+}
+
+#SettingsButton { /* For the settings button */
+    background-color: #44475a;
+    color: #f8f8f2;
+    border: none;
+    border-radius: 8px;
+    min-width: 40px;
+    max-width: 40px;
+    min-height: 40px;
+    max-height: 40px;
+    font-size: 18px;
+    margin: 5px;
+}
+
+#SettingsButton:hover {
+    background-color: #6272a4;
+}
+
+#SettingsButton:pressed {
+    background-color: #bd93f9;
+}
+
+/* Main Content Area Styling */
+#MainContentWidget { /* Using objectName for the main content widget */
+    background-color: #282a36; /* Same as main window for seamless look */
+    border-bottom-right-radius: 10px;
+}
+
+/* Specific styling for the QLabel within MainContentAreaWidget instances */
+#MainContentWidget QLabel {
+    background-color: #383a59; /* Slightly different dark shade */
+    border: 2px dashed #f8f8f2;
+    border-radius: 8px;
+    color: #f8f8f2;
+    font-size: 16px;
+    padding: 20px;
+}
+
+/* Generic QDialog Styling (for settings dialog) */
+QDialog {
+    background-color: #282a36;
+    border: 1px solid #6272a4;
+    border-radius: 10px;
+    color: #f8f8f2;
+}
+QDialog QLabel {
+    color: #f8f8f2;
+}
