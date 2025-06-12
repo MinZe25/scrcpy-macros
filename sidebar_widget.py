@@ -14,6 +14,7 @@ class SidebarWidget(QFrame):
         self.sidebar_layout = QVBoxLayout(self)
         self.sidebar_layout.setContentsMargins(5, 10, 5, 5)
         self.sidebar_layout.setSpacing(10)
+        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
 
         for i in range(num_instances):
             btn = QPushButton("💬")
