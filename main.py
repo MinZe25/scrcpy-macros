@@ -355,21 +355,31 @@ class MyQtApp(QMainWindow):
                 print(f"Warning: Could not set native focus to Scrcpy window on showEvent: {e}")
 
     def _on_stacked_widget_page_changed(self, index: int):
-        # QTimer.singleShot(0, self.update_global_overlay_geometry)
         print(f"Stacked widget page changed to index: {index}")
         for i, page in enumerate(self.main_content_pages):
             if page.scrcpy_hwnd:
                 if i == index:
                     win32gui.ShowWindow(page.scrcpy_hwnd, win32con.SW_SHOW)
-                    page.resize_scrcpy_native_window()
+                    # No need for this resize here, it will happen after layout update
+                    # page.resize_scrcpy_native_window()
                     try:
                         win32gui.SetFocus(page.scrcpy_hwnd)
-                        page.resize_scrcpy_native_window()
+                        # And again, no need for this resize here
+                        # page.resize_scrcpy_native_window()
                         print(f"Set native focus to Scrcpy window HWND: {page.scrcpy_hwnd} on page change.")
                     except Exception as e:
                         print(f"Warning: Could not set native focus to Scrcpy window on page change: {e}")
                 else:
                     win32gui.ShowWindow(page.scrcpy_hwnd, win32con.SW_HIDE)
+
+        # Force a layout recalculation for the main window's central widget
+        # This is the most crucial part to fix the sidebar
+        self.main_widget.updateGeometry()
+        self.main_layout.invalidate()
+        self.content_layout.invalidate()  # Invalidate the specific layout containing sidebar and stacked widget
+
+        # Give a small delay for Scrcpy window to potentially update its size/position
+        # then update the overlay geometry. A short delay can be beneficial here.
         QTimer.singleShot(100, self.update_global_overlay_geometry)
 
     def on_scrcpy_container_ready(self):
