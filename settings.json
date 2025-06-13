@@ -4,7 +4,8 @@
     "overlay_border_color": "#ff000000",
     "overlay_text_color": "#ffffffff",
     "default_keymap_size": 50,
-    "overlay_opacity": 0.9
+    "overlay_opacity": 0.9,
+    "hold_time": 1000
   },
   "instances": [
     {

@@ -9,7 +9,8 @@
             0.6728070175438596,
             0.22464898595943839
         ],
-        "type": "circle"
+        "type": "circle",
+        "hold": false
     },
     {
         "normalized_size": [
@@ -23,7 +24,8 @@
             0.8367521367521368,
             0.22796352583586627
         ],
-        "type": "circle"
+        "type": "circle",
+        "hold": false
     },
     {
         "normalized_size": [
@@ -37,7 +39,8 @@
             0.8354700854700855,
             0.31155015197568386
         ],
-        "type": "circle"
+        "type": "circle",
+        "hold": false
     },
     {
         "normalized_size": [
@@ -51,7 +54,8 @@
             0.8354700854700855,
             0.3966565349544073
         ],
-        "type": "circle"
+        "type": "circle",
+        "hold": false
     },
     {
         "normalized_size": [
@@ -65,7 +69,8 @@
             0.8367521367521368,
             0.4825227963525836
         ],
-        "type": "circle"
+        "type": "circle",
+        "hold": false
     },
     {
         "normalized_size": [
@@ -79,7 +84,8 @@
             0.8337606837606838,
             0.5600303951367781
         ],
-        "type": "circle"
+        "type": "circle",
+        "hold": false
     },
     {
         "normalized_size": [
@@ -93,7 +99,8 @@
             0.8358974358974359,
             0.6527355623100304
         ],
-        "type": "circle"
+        "type": "circle",
+        "hold": false
     },
     {
         "normalized_size": [
@@ -107,7 +114,8 @@
             0.8358974358974359,
             0.1466565349544073
         ],
-        "type": "circle"
+        "type": "circle",
+        "hold": false
     },
     {
         "normalized_size": [
@@ -121,7 +129,8 @@
             0.9333333333333333,
             0.7819148936170213
         ],
-        "type": "circle"
+        "type": "circle",
+        "hold": false
     },
     {
         "normalized_size": [
@@ -135,7 +144,8 @@
             0.9277777777777778,
             0.9346504559270516
         ],
-        "type": "circle"
+        "type": "circle",
+        "hold": false
     },
     {
         "normalized_size": [
@@ -149,7 +159,8 @@
             0.8923076923076924,
             0.7857142857142857
         ],
-        "type": "circle"
+        "type": "circle",
+        "hold": false
     },
     {
         "normalized_size": [
@@ -163,7 +174,8 @@
             0.8461538461538461,
             0.8556231003039514
         ],
-        "type": "circle"
+        "type": "circle",
+        "hold": false
     },
     {
         "normalized_size": [
@@ -177,7 +189,8 @@
             0.8927350427350428,
             0.8541033434650456
         ],
-        "type": "circle"
+        "type": "circle",
+        "hold": false
     },
     {
         "normalized_size": [
@@ -191,7 +204,8 @@
             0.8457264957264957,
             0.7834346504559271
         ],
-        "type": "circle"
+        "type": "circle",
+        "hold": false
     },
     {
         "normalized_size": [
@@ -205,6 +219,7 @@
             0.9427350427350427,
             0.03343465045592705
         ],
-        "type": "circle"
+        "type": "circle",
+        "hold": true
     }
 ]

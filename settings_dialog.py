@@ -163,6 +163,15 @@ class SettingsDialog(QDialog):
         layout.addRow("Overlay Opacity:", overlay_opacity_spinbox)
         tab_page.overlay_opacity_field = overlay_opacity_spinbox
 
+        # Overlay Opacity (still a separate spinbox as per requirements)
+        hold_duration_ms_spinbox = QSpinBox()
+        hold_duration_ms_spinbox.setRange(1, 3000)
+        hold_duration_ms_spinbox.setSingleStep(1)
+        hold_duration_ms_spinbox.setValue(settings.get("hold_time", 100))
+        hold_duration_ms_spinbox.setSuffix("ms")
+        layout.addRow("Hold Tap Time:", hold_duration_ms_spinbox)
+        tab_page.hold_duration_field = hold_duration_ms_spinbox
+
         # Spacer to push elements to top
         layout.addItem(QSpacerItem(20, 40, QSizePolicy.Minimum, QSizePolicy.Expanding))
 
@@ -338,6 +347,7 @@ class SettingsDialog(QDialog):
             "overlay_text_color": general_tab.overlay_text_color_field.property("current_color_hex"),
             "default_keymap_size": general_tab.default_keymap_size_field.value(),
             "overlay_opacity": general_tab.overlay_opacity_field.value(),
+            "hold_time": general_tab.hold_duration_field.value(),
         }
 
         # Save Instance Settings (starting from the second tab)

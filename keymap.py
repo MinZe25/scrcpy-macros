@@ -7,7 +7,8 @@ class Keymap:
     Stores position and size as normalized floats (0.0 to 1.0).
     """
 
-    def __init__(self, normalized_size: tuple, keycombo: list, normalized_position: tuple, type: str = "circle"):
+    def __init__(self, normalized_size: tuple, keycombo: list, normalized_position: tuple, type: str = "circle",
+                 hold: bool = False):
         """
         Initialize a Keymap object.
         Args:
@@ -20,6 +21,7 @@ class Keymap:
         self.keycombo = keycombo
         self.normalized_position = QPointF(normalized_position[0], normalized_position[1])
         self.type = type
+        self.hold = hold
 
     def to_dict(self):
         """Converts the Keymap object to a dictionary for JSON serialization."""
@@ -27,7 +29,8 @@ class Keymap:
             "normalized_size": [self.normalized_size.width(), self.normalized_size.height()],
             "keycombo": self.keycombo,
             "normalized_position": [self.normalized_position.x(), self.normalized_position.y()],
-            "type": self.type
+            "type": self.type,
+            "hold": self.hold,
         }
 
     @staticmethod
@@ -37,5 +40,6 @@ class Keymap:
             normalized_size=tuple(data["normalized_size"]),
             keycombo=data["keycombo"],
             normalized_position=tuple(data["normalized_position"]),
-            type=data["type"]
+            type=data["type"],
+            hold=data.get("hold", False)
         )

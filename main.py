@@ -88,7 +88,8 @@ class MyQtApp(QMainWindow):
         self.main_content_pages = []
         for i in range(self.num_instances):
             serial = device_serials[i] if i < len(device_serials) else None
-            page = MainContentAreaWidget(instance_id=i, title_base=SCRCPY_WINDOW_TITLE_BASE, settings=self.settings.get("instances")[i],
+            page = MainContentAreaWidget(instance_id=i, title_base=SCRCPY_WINDOW_TITLE_BASE,
+                                         settings=self.settings.get("instances")[i],
                                          device_serial=serial, parent=self)
             page.scrcpy_container_ready.connect(self.on_scrcpy_container_ready)
             self.stacked_widget.addWidget(page)
@@ -164,6 +165,20 @@ class MyQtApp(QMainWindow):
                 print(f"Error sending ADB keyevent: {e}")
         else:
             print(f"Cannot send ADB keyevent '{keycode}': No active Scrcpy page or display ID not detected.")
+
+    def send_scrcpy_swipe(self, x1: int, y1: int, x2: int, y2: int, duration: int):
+        current_page = self.stacked_widget.currentWidget()
+        if current_page and current_page.scrcpy_display_id is not None:
+            display_id, device_ip = current_page.scrcpy_display_id, "192.168.1.38"
+            adb_cmd = ['adb', '-s', device_ip, 'shell', 'input', '-d', str(display_id), 'swipe', str(x1), str(y1),
+                       str(x2), str(y2), str(duration)]
+            try:
+                subprocess.Popen(adb_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                 creationflags=subprocess.CREATE_NO_WINDOW)
+                print(
+                    f"Sent ADB swipe to {device_ip} (display {display_id}) from ({x1}, {y1}) to ({x2}, {y2}) with duration {duration}ms")
+            except Exception as e:
+                print(f"Error sending ADB swipe: {e}")
 
     def send_scrcpy_tap(self, x: int, y: int):
         current_page = self.stacked_widget.currentWidget()
@@ -459,7 +474,11 @@ class MyQtApp(QMainWindow):
                     pixel_height_native = keymap.normalized_size.height() * SCRCPY_NATIVE_HEIGHT
                     center_x_native = int(pixel_x_native + pixel_width_native / 2)
                     center_y_native = int(pixel_y_native + pixel_height_native / 2)
-                    self.send_scrcpy_tap(center_x_native, center_y_native)
+                    if keymap.hold:
+                        duration = self.settings.get("general_settings", {}).get("hold_time", 100)
+                        self.send_scrcpy_swipe(center_x_native, center_y_native, center_x_native, center_y_native, duration)
+                    else:
+                        self.send_scrcpy_tap(center_x_native, center_y_native)
                     event.accept()
                     keymap_activated = True
                     break
