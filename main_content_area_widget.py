@@ -15,6 +15,9 @@ class MainContentAreaWidget(QWidget):
 
     def __init__(self, instance_id: int, settings: dict, title_base: str, device_serial: str = None, parent=None, ):
         super().__init__(parent)
+        self.start_instance = 0
+        self.start = False
+        self.start = self.start or self.start_instance == instance_id
         self.settings = settings
         self.setObjectName("MainContentWidget")
         self.instance_id = instance_id
@@ -43,8 +46,8 @@ class MainContentAreaWidget(QWidget):
         self.main_content_layout.addWidget(self.placeholder_label)
 
         self.scrcpy_output_timer.timeout.connect(self._read_scrcpy_output)
-        # if instance_id == 0:
-        QTimer.singleShot(1000 * instance_id, self.start_scrcpy)
+        if self.start:
+            QTimer.singleShot(1000 * instance_id, self.start_scrcpy)
         self.installEventFilter(self)
 
     def _read_scrcpy_output(self):

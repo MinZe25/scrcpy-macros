@@ -54,7 +54,7 @@ class MyQtApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Bonito Integrated Controller")
-        self.settings = []
+        self.settings = {}
         self.setGeometry(100, 100, 1200, 800)
         self.setStyleSheet(self.load_stylesheet_from_file('style.css'))
         self.setMouseTracking(True)
@@ -74,7 +74,7 @@ class MyQtApp(QMainWindow):
         self.main_layout.addLayout(self.content_layout, 1)
 
         self.load_settings_from_local_json()
-        self.num_instances = len(self.settings)
+        self.num_instances = len(self.settings.get("instances", []))
         device_serials = [None] * self.num_instances
 
         self.sidebar = SidebarWidget(num_instances=self.num_instances, parent=self)
@@ -88,7 +88,7 @@ class MyQtApp(QMainWindow):
         self.main_content_pages = []
         for i in range(self.num_instances):
             serial = device_serials[i] if i < len(device_serials) else None
-            page = MainContentAreaWidget(instance_id=i, title_base=SCRCPY_WINDOW_TITLE_BASE, settings=self.settings[i],
+            page = MainContentAreaWidget(instance_id=i, title_base=SCRCPY_WINDOW_TITLE_BASE, settings=self.settings.get("instances")[i],
                                          device_serial=serial, parent=self)
             page.scrcpy_container_ready.connect(self.on_scrcpy_container_ready)
             self.stacked_widget.addWidget(page)
@@ -104,9 +104,11 @@ class MyQtApp(QMainWindow):
 
         self.current_instance_keymaps = []
         self.play_overlay = OverlayWidget(keymaps=self.current_instance_keymaps, is_transparent_to_mouse=True,
+                                          general_settings=self.settings.get("general_settings", {}),
                                           parent=self)
         self.edit_overlay = OverlayWidget(keymaps=self.current_instance_keymaps,
                                           is_transparent_to_mouse=False,
+                                          general_settings=self.settings.get("general_settings", {}),
                                           parent=self)
         self.edit_overlay.keymaps_changed.connect(self.save_keymaps_to_local_json)
 
@@ -252,9 +254,13 @@ class MyQtApp(QMainWindow):
         print("Opening settings dialog...")
         try:
             dialog = SettingsDialog(current_settings=self.settings, parent=self)
-            dialog.exec_()
-            self.settings = dialog.get_settings()
-            print("Settings dialog closed.")
+            if dialog.exec_():
+                print("Settings dialog saved")
+                self.settings = dialog.get_settings()
+                self.edit_overlay.reload_settings(self.settings)
+                self.play_overlay.reload_settings(self.settings)
+            else:
+                print("Settings dialog cancelled")
         except Exception as e:
             print(f"Error showing settings dialog: {e}")
 

@@ -108,6 +108,6 @@ QDialog {
     border-radius: 10px;
     color: #f8f8f2;
 }
-QDialog QLabel {
-    color: #f8f8f2;
-}
+/*QDialog QLabel {*/
+/*    color: #f8f8f2;*/
+/*}*/

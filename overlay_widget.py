@@ -10,7 +10,8 @@ from keymap import Keymap
 class OverlayWidget(QWidget):
     keymaps_changed = pyqtSignal(list)  # Signal to notify parent of keymap changes
 
-    def __init__(self, keymaps: list = None, parent=None, is_transparent_to_mouse: bool = False):
+    def __init__(self, keymaps: list = None, parent=None, is_transparent_to_mouse: bool = False,
+                 general_settings: dict = None):
         """
         Initialize an OverlayWidget.
         Args:
@@ -36,7 +37,7 @@ class OverlayWidget(QWidget):
         self._keymap_original_pixel_pos = QPoint()  # Original pixel position of keymap when drag starts
         self._selected_keymap_for_combo_edit = None
         self._pending_modifier_key = None  # To handle Shift+A, Ctrl+B etc.
-
+        self.general_settings = general_settings if general_settings is not None else {}
         # Enable mouse tracking to show appropriate cursor in edit mode
         self.setMouseTracking(True)
 
@@ -56,6 +57,9 @@ class OverlayWidget(QWidget):
         self.keymaps = keymaps_list  # We are given a reference to the shared list
         self.update()  # Redraw to show updated keymaps
 
+    def reload_settings(self, general_settings):
+        self.general_settings = general_settings if general_settings is not None else {}
+        self.update()
     def set_edit_mode(self, active: bool):
         """
         Activates or deactivates the keymap editing mode for this specific overlay.
@@ -120,7 +124,8 @@ class OverlayWidget(QWidget):
 
             if keymap.type == "circle":
                 painter.setPen(Qt.NoPen)
-                painter.setBrush(QColor(255, 0, 0, 120))  # Red, 120 alpha
+                color = self.general_settings.get("overlay_bg_color", "#ff0000ff")
+                painter.setBrush(QColor(color))  # Red, 120 alpha
                 painter.drawEllipse(keymap_rect)  # Draw ellipse using the keymap's rect
 
                 # Prepare and draw text for the key combination
