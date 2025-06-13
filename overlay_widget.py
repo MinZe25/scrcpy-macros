@@ -189,7 +189,6 @@ class OverlayWidget(QWidget):
                 pixel_width = selected_keymap.normalized_size.width() * self.width()
                 pixel_height = selected_keymap.normalized_size.height() * self.height()
                 selected_keymap_pixel_rect = QRectF(pixel_x, pixel_y, pixel_width, pixel_height)
-
                 x_button_size_pixels = 25
                 x_button_rect = QRectF(
                     selected_keymap_pixel_rect.right() - x_button_size_pixels / 2,
@@ -224,7 +223,8 @@ class OverlayWidget(QWidget):
 
             if not clicked_on_existing_keymap:
                 self._creating_keymap = True
-                new_keymap = Keymap(normalized_size=(0.01, 0.01),
+
+                new_keymap = Keymap(normalized_size=(0.1, 0.1),
                                     keycombo=[],
                                     normalized_position=(event.pos().x() / self.width(),
                                                          event.pos().y() / self.height()))
@@ -293,7 +293,7 @@ class OverlayWidget(QWidget):
                 if self._creating_keymap:
                     if distance_moved < 5:
                         self.keymaps.remove(self._dragging_keymap)
-                        default_pixel_diameter = 100
+                        default_pixel_diameter = self.general_settings.get("default_keymap_size", 100)
                         new_norm_width = default_pixel_diameter / self.width()
                         new_norm_height = default_pixel_diameter / self.height()
                         new_norm_x = (release_pos.x() - default_pixel_diameter // 2) / self.width()

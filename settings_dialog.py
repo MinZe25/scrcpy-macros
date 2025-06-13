@@ -148,7 +148,7 @@ class SettingsDialog(QDialog):
 
         # Default New Keymap Size
         default_keymap_size_spinbox = QSpinBox()
-        default_keymap_size_spinbox.setRange(10, 500)
+        default_keymap_size_spinbox.setRange(1, 500)
         default_keymap_size_spinbox.setValue(settings.get("default_keymap_size", 50))
         default_keymap_size_spinbox.setSuffix(" px")
         layout.addRow("Default New Keymap Size:", default_keymap_size_spinbox)
