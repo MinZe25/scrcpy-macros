@@ -1,7 +1,7 @@
 import math
 
 from PyQt5.QtCore import pyqtSignal, Qt, QPoint, QRectF, QPointF, QSizeF
-from PyQt5.QtGui import QKeySequence, QPainter, QColor, QFontMetrics, QMouseEvent, QKeyEvent
+from PyQt5.QtGui import QKeySequence, QPainter, QColor, QFontMetrics, QMouseEvent, QKeyEvent, QPen
 from PyQt5.QtWidgets import QWidget
 
 from keymap import Keymap
@@ -60,6 +60,7 @@ class OverlayWidget(QWidget):
     def reload_settings(self, general_settings):
         self.general_settings = general_settings if general_settings is not None else {}
         self.update()
+
     def set_edit_mode(self, active: bool):
         """
         Activates or deactivates the keymap editing mode for this specific overlay.
@@ -125,9 +126,12 @@ class OverlayWidget(QWidget):
             if keymap.type == "circle":
                 painter.setPen(Qt.NoPen)
                 color = self.general_settings.get("overlay_bg_color", "#ff0000ff")
+                border_color = self.general_settings.get("overlay_border_color", "#ff0000ff")
+                border_pen = QPen(QColor(border_color), 2, Qt.SolidLine)  # Thickness 2, solid line
+
+                painter.setPen(border_pen)
                 painter.setBrush(QColor(color))  # Red, 120 alpha
                 painter.drawEllipse(keymap_rect)  # Draw ellipse using the keymap's rect
-
                 # Prepare and draw text for the key combination
                 key_texts = [self._get_key_text(kc) for kc in keymap.keycombo]
                 display_text = "+".join(key_texts) if key_texts else "KEY"  # Default text if no key is set
@@ -146,8 +150,8 @@ class OverlayWidget(QWidget):
                     if text_bounding_rect.width() <= keymap_rect.width() * 0.9 and \
                             text_bounding_rect.height() <= keymap_rect.height() * 0.9:
                         break  # Found a font size that fits
-
-                painter.setPen(QColor(255, 255, 255))  # White text for key combo
+                text_color = self.general_settings.get("overlay_text_color", "#ffffff")
+                painter.setPen(QColor(text_color))  # White text for key combo
                 painter.drawText(keymap_rect, Qt.AlignCenter, display_text)
 
             # Draw the 'X' button if in edit mode and this keymap is selected

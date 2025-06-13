@@ -257,8 +257,8 @@ class MyQtApp(QMainWindow):
             if dialog.exec_():
                 print("Settings dialog saved")
                 self.settings = dialog.get_settings()
-                self.edit_overlay.reload_settings(self.settings)
-                self.play_overlay.reload_settings(self.settings)
+                self.edit_overlay.reload_settings(self.settings.get("general_settings", {}))
+                self.play_overlay.reload_settings(self.settings.get("general_settings", {}))
             else:
                 print("Settings dialog cancelled")
         except Exception as e:

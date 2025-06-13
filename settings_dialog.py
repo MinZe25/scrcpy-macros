@@ -3,9 +3,10 @@ import sys
 from PyQt5.QtWidgets import (
     QApplication, QDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QWidget,
     QFormLayout, QLineEdit, QCheckBox, QSpinBox, QComboBox, QPushButton,
-    QLabel, QSpacerItem, QSizePolicy, QDoubleSpinBox
+    QLabel, QSpacerItem, QSizePolicy, QDoubleSpinBox, QColorDialog
 )
 from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QColor
 
 
 # --- Settings Dialog for Scrcpy Instances ---
@@ -31,6 +32,8 @@ class SettingsDialog(QDialog):
         self.setMinimumSize(500, 450)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
 
+        # Apply a specific stylesheet for the dialog to ensure labels are visible
+        # and inputs have a clear appearance, overriding any potential main app stylesheet issues.
         # Store the initial settings and a placeholder for the new settings on save
         # Handle both old list format and new dict format
         if isinstance(current_settings, dict) and "instances" in current_settings:
@@ -38,9 +41,9 @@ class SettingsDialog(QDialog):
             self.initial_general_settings = current_settings.get("general_settings", {})
         else:
             self.initial_instance_settings = current_settings or []
-            self.initial_general_settings = {} # Default empty general settings
+            self.initial_general_settings = {}  # Default empty general settings
 
-        self.final_settings = {} # This will store both instance and general settings
+        self.final_settings = {}  # This will store both instance and general settings
 
         print("Initializing settings")
         # --- Main Layout ---
@@ -52,7 +55,6 @@ class SettingsDialog(QDialog):
 
         # Add General Tab First
         self._add_general_tab()
-
 
         # --- Tab Management Buttons ---
         tab_management_layout = QHBoxLayout()
@@ -76,6 +78,7 @@ class SettingsDialog(QDialog):
         button_layout.addWidget(save_btn)
 
         cancel_btn = QPushButton("Cancel")
+        cancel_btn.setObjectName("CancelButton")  # Set object name for specific styling
         cancel_btn.clicked.connect(self.reject)
         button_layout.addWidget(cancel_btn)
 
@@ -108,23 +111,40 @@ class SettingsDialog(QDialog):
         layout.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
         layout.setLabelAlignment(Qt.AlignRight)
 
+        # Helper to create a color pick button
+        def create_color_picker_row(label_text: str, initial_color: QColor):
+            button = QPushButton("")
+            button.setObjectName("color_button")  # For CSS styling
+            button.setFixedSize(40, 25)  # Fixed size for color preview
+            self._update_color_button_style(button, initial_color)
+            button.clicked.connect(lambda: self._open_color_dialog(button))
+            layout.addRow(label_text, button)
+            return button
+
         # Background Color
-        bg_color_field = QLineEdit(settings.get("overlay_bg_color", "#3498db")) # Default blue
-        bg_color_field.setPlaceholderText("e.g., #RRGGBB or blue")
-        layout.addRow("Overlay Background Color:", bg_color_field)
-        tab_page.overlay_bg_color_field = bg_color_field
+        # Ensure default color has full opacity if loaded from settings without alpha, or use a default with alpha
+        initial_bg_color = QColor(settings.get("overlay_bg_color", "#3498dbFF"))
+        bg_color_btn = create_color_picker_row(
+            "Overlay Background Color:",
+            initial_bg_color
+        )
+        tab_page.overlay_bg_color_field = bg_color_btn  # Store button reference
 
         # Border Color
-        border_color_field = QLineEdit(settings.get("overlay_border_color", "#2c3e50")) # Default dark blue/grey
-        border_color_field.setPlaceholderText("e.g., #RRGGBB or black")
-        layout.addRow("Overlay Border Color:", border_color_field)
-        tab_page.overlay_border_color_field = border_color_field
+        initial_border_color = QColor(settings.get("overlay_border_color", "#2c3e50FF"))
+        border_color_btn = create_color_picker_row(
+            "Overlay Border Color:",
+            initial_border_color
+        )
+        tab_page.overlay_border_color_field = border_color_btn  # Store button reference
 
         # Text Color
-        text_color_field = QLineEdit(settings.get("overlay_text_color", "#ffffff")) # Default white
-        text_color_field.setPlaceholderText("e.g., #RRGGBB or white")
-        layout.addRow("Overlay Text Color:", text_color_field)
-        tab_page.overlay_text_color_field = text_color_field
+        initial_text_color = QColor(settings.get("overlay_text_color", "#ffffffFF"))
+        text_color_btn = create_color_picker_row(
+            "Overlay Text Color:",
+            initial_text_color
+        )
+        tab_page.overlay_text_color_field = text_color_btn  # Store button reference
 
         # Default New Keymap Size
         default_keymap_size_spinbox = QSpinBox()
@@ -134,12 +154,12 @@ class SettingsDialog(QDialog):
         layout.addRow("Default New Keymap Size:", default_keymap_size_spinbox)
         tab_page.default_keymap_size_field = default_keymap_size_spinbox
 
-        # Overlay Opacity
+        # Overlay Opacity (still a separate spinbox as per requirements)
         overlay_opacity_spinbox = QDoubleSpinBox()
         overlay_opacity_spinbox.setRange(0.1, 1.0)
         overlay_opacity_spinbox.setSingleStep(0.05)
         overlay_opacity_spinbox.setValue(settings.get("overlay_opacity", 0.7))
-        overlay_opacity_spinbox.setSuffix("") # No suffix as it's a ratio
+        overlay_opacity_spinbox.setSuffix("")  # No suffix as it's a ratio
         layout.addRow("Overlay Opacity:", overlay_opacity_spinbox)
         tab_page.overlay_opacity_field = overlay_opacity_spinbox
 
@@ -148,6 +168,36 @@ class SettingsDialog(QDialog):
 
         return tab_page
 
+    def _update_color_button_style(self, button: QPushButton, color: QColor):
+        """
+        Updates the background color of a QPushButton to reflect the chosen color, including alpha.
+        Also stores the color hex string (with alpha) directly on the button object for easy retrieval.
+        """
+        # For CSS stylesheet, use rgba format to correctly apply alpha
+        r, g, b, a = color.getRgb()
+        rgba_str = f"rgba({r}, {g}, {b}, {a / 255.0:.2f})"
+        button.setStyleSheet(f"background-color: {rgba_str}; border: 1px solid #888888; border-radius: 4px;")
+
+        # Store the color in #AARRGGBB format for saving (e.g., #FFRRGGBB)
+        button.setProperty("current_color_hex", color.name(QColor.HexArgb))
+
+    def _open_color_dialog(self, button: QPushButton):
+        """
+        Opens a QColorDialog and updates the button's style and stored color upon selection.
+        """
+        # Get the current color from the button's property to set as initial for the dialog
+        initial_color_hex = button.property("current_color_hex")
+        # Ensure QColor can correctly parse the initial_color_hex (including alpha if present)
+        initial_color = QColor(initial_color_hex) if initial_color_hex else QColor(Qt.black)
+
+        color_dialog = QColorDialog(initial_color, self)
+        color_dialog.setOption(QColorDialog.ShowAlphaChannel, True)  # Show alpha channel
+        color_dialog.setOption(QColorDialog.DontUseNativeDialog, True)  # Use Qt's dialog, not native
+
+        if color_dialog.exec_():
+            selected_color = color_dialog.selectedColor()
+            # Pass the QColor object directly to the style update method
+            self._update_color_button_style(button, selected_color)
 
     def _load_initial_instance_settings(self):
         """Loads the initial list of instance settings into the tab widget."""
@@ -157,7 +207,8 @@ class SettingsDialog(QDialog):
         else:
             # Create a tab for each setting dictionary provided
             for settings_data in self.initial_instance_settings:
-                instance_name = settings_data.get("instance_name", f"Instance {self.tab_widget.count()}") # Adjust count due to General tab
+                instance_name = settings_data.get("instance_name",
+                                                  f"Instance {self.tab_widget.count()}")  # Adjust count due to General tab
                 new_tab_widget = self._create_instance_tab(settings_data)
                 self.tab_widget.addTab(new_tab_widget, instance_name)
 
@@ -228,7 +279,6 @@ class SettingsDialog(QDialog):
         layout.addRow("Resolution (WxH):", resolution_field)
         tab_page.resolution_field = resolution_field
 
-
         # --- App & Window Settings ---
         start_app_field = QLineEdit(settings.get("start_app", "com.ankama.dofustouch"))
         start_app_field.setPlaceholderText("e.g., com.android.chrome")
@@ -260,7 +310,7 @@ class SettingsDialog(QDialog):
         """Adds a new, empty tab to the tab widget."""
         # For the first default tab, don't show a confirmation if the user tries to remove it
         # Otherwise, every new tab is just a standard instance.
-        instance_name = f"Instance {self.tab_widget.count()}" # Adjust count due to General tab
+        instance_name = f"Instance {self.tab_widget.count()}"  # Adjust count due to General tab
         new_tab_widget = self._create_instance_tab()
         self.tab_widget.addTab(new_tab_widget, instance_name)
         self.tab_widget.setCurrentWidget(new_tab_widget)
@@ -269,12 +319,11 @@ class SettingsDialog(QDialog):
         """Removes the currently selected tab, but not if it's the last one or the General tab."""
         current_index = self.tab_widget.currentIndex()
         # Prevent removal of General tab (index 0) and ensure at least one instance tab remains
-        if current_index == 0 or self.tab_widget.count() <= 2: # 1 for General, 1 for instance
+        if current_index == 0 or self.tab_widget.count() <= 2:  # 1 for General, 1 for instance
             print("Cannot remove the General tab or the last instance tab.")
             return
 
         self.tab_widget.removeTab(current_index)
-
 
     def _save_settings(self):
         """
@@ -284,16 +333,16 @@ class SettingsDialog(QDialog):
         # Save General Settings first (assuming it's always the first tab)
         general_tab = self.tab_widget.widget(0)
         self.final_settings["general_settings"] = {
-            "overlay_bg_color": general_tab.overlay_bg_color_field.text(),
-            "overlay_border_color": general_tab.overlay_border_color_field.text(),
-            "overlay_text_color": general_tab.overlay_text_color_field.text(),
+            "overlay_bg_color": general_tab.overlay_bg_color_field.property("current_color_hex"),
+            "overlay_border_color": general_tab.overlay_border_color_field.property("current_color_hex"),
+            "overlay_text_color": general_tab.overlay_text_color_field.property("current_color_hex"),
             "default_keymap_size": general_tab.default_keymap_size_field.value(),
             "overlay_opacity": general_tab.overlay_opacity_field.value(),
         }
 
         # Save Instance Settings (starting from the second tab)
         instance_settings_list = []
-        for i in range(1, self.tab_widget.count()): # Start from 1 to skip General tab
+        for i in range(1, self.tab_widget.count()):  # Start from 1 to skip General tab
             tab = self.tab_widget.widget(i)
             settings_data = {
                 "instance_name": tab.instance_name_field.text(),
@@ -329,6 +378,8 @@ class SettingsDialog(QDialog):
 # --- Example Usage (for standalone testing) ---
 if __name__ == '__main__':
     app = QApplication(sys.argv)
+
+
     def load_settings_from_local_json():
         try:
             with open('settings.json', 'r', encoding='utf-8') as f:
@@ -336,7 +387,8 @@ if __name__ == '__main__':
             print(f"Keymaps loaded from {'settings.json'}.")
         except Exception as e:
             print(f"Error loading keymaps from {'settings.json'}: {e}. Starting with empty keymaps.")
-            return None # Return None if loading fails
+            return None  # Return None if loading fails
+
 
     # Example of pre-existing settings you might load from a file
     # If this is None or empty, the dialog will start with one default tab

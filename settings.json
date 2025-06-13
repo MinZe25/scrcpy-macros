@@ -1,7 +1,7 @@
 {
   "general_settings": {
-    "overlay_bg_color": "#ff33ffff",
-    "overlay_border_color": "#2c3e50",
+    "overlay_bg_color": "#001e00ff",
+    "overlay_border_color": "#ff000000",
     "overlay_text_color": "#ffffffff",
     "default_keymap_size": 10,
     "overlay_opacity": 0.9
