@@ -172,6 +172,28 @@ class OverlayWidget(QWidget):
                 painter.setPen(QColor(255, 255, 255))
                 painter.drawText(x_button_rect, Qt.AlignCenter, "X")
 
+                # --- NEW: Draw the 'Hold' button ---
+                hold_button_size_pixels = 25
+                hold_button_rect = QRectF(
+                    keymap_rect.left() - hold_button_size_pixels / 2,  # Top-left position
+                    keymap_rect.top() - hold_button_size_pixels / 2,
+                    hold_button_size_pixels,
+                    hold_button_size_pixels
+                )
+
+                # Choose color based on keymap.hold state
+                hold_button_color = QColor(0, 200, 0, 200) if keymap.hold else QColor(100, 100, 100,
+                                                                                      200)  # Green if hold, grey if not
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(hold_button_color)
+                painter.drawEllipse(hold_button_rect)
+
+                font.setPointSize(int(hold_button_size_pixels * 0.7))  # Reuse font object
+                painter.setFont(font)
+                painter.setPen(QColor(255, 255, 255))  # White text
+                painter.drawText(hold_button_rect, Qt.AlignCenter, "H")  # 'H' for Hold
+                # --- END NEW ---
+
         painter.end()
 
     def mousePressEvent(self, event: QMouseEvent):
@@ -189,6 +211,7 @@ class OverlayWidget(QWidget):
                 pixel_width = selected_keymap.normalized_size.width() * self.width()
                 pixel_height = selected_keymap.normalized_size.height() * self.height()
                 selected_keymap_pixel_rect = QRectF(pixel_x, pixel_y, pixel_width, pixel_height)
+
                 x_button_size_pixels = 25
                 x_button_rect = QRectF(
                     selected_keymap_pixel_rect.right() - x_button_size_pixels / 2,
@@ -197,6 +220,16 @@ class OverlayWidget(QWidget):
                     x_button_size_pixels
                 )
 
+                # --- NEW: Define Hold button rect ---
+                hold_button_size_pixels = 25
+                hold_button_rect = QRectF(
+                    selected_keymap_pixel_rect.left() - hold_button_size_pixels / 2,
+                    selected_keymap_pixel_rect.top() - hold_button_size_pixels / 2,
+                    hold_button_size_pixels,
+                    hold_button_size_pixels
+                )
+                # --- END NEW ---
+
                 if x_button_rect.contains(event.pos()):
                     self.keymaps.remove(selected_keymap)
                     self._selected_keymap_for_combo_edit = None
@@ -204,6 +237,15 @@ class OverlayWidget(QWidget):
                     self.update()
                     event.accept()
                     return
+                # --- NEW: Handle Hold button click ---
+                elif hold_button_rect.contains(event.pos()):
+                    selected_keymap.hold = not selected_keymap.hold  # Toggle the hold attribute
+                    print(f"Keymap hold state toggled to: {selected_keymap.hold}")
+                    self.keymaps_changed.emit(self.keymaps)  # Emit to save change
+                    self.update()
+                    event.accept()
+                    return
+                # --- END NEW ---
 
             self._selected_keymap_for_combo_edit = None
             clicked_on_existing_keymap = False
@@ -227,7 +269,8 @@ class OverlayWidget(QWidget):
                 new_keymap = Keymap(normalized_size=(0.1, 0.1),
                                     keycombo=[],
                                     normalized_position=(event.pos().x() / self.width(),
-                                                         event.pos().y() / self.height()))
+                                                         event.pos().y() / self.height()),
+                                    hold=False)  # Ensure new keymaps have a hold attribute
                 self.keymaps.append(new_keymap)
                 self._dragging_keymap = new_keymap
 
@@ -300,7 +343,8 @@ class OverlayWidget(QWidget):
                         new_norm_y = (release_pos.y() - default_pixel_diameter // 2) / self.height()
                         new_keymap = Keymap(normalized_size=(new_norm_width, new_norm_height),
                                             keycombo=[],
-                                            normalized_position=(new_norm_x, new_norm_y))
+                                            normalized_position=(new_norm_x, new_norm_y),
+                                            hold=False)  # Ensure new keymaps have a hold attribute
                         self.keymaps.append(new_keymap)
                         self._selected_keymap_for_combo_edit = new_keymap
                     else:
