@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 from PyQt5.QtWidgets import (
     QApplication, QDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QWidget,
@@ -10,6 +11,15 @@ from PyQt5.QtGui import QColor
 
 
 # --- Settings Dialog for Scrcpy Instances ---
+def resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
+
 
 class SettingsDialog(QDialog):
     """
@@ -370,7 +380,7 @@ class SettingsDialog(QDialog):
         self.final_settings["instances"] = instance_settings_list
 
         print("Settings saved:")
-        with open('settings.json', 'w') as f:
+        with open(resource_path('settings.json'), 'w') as f:
             json.dump(self.final_settings, f, indent=2)
 
         self.accept()
@@ -392,7 +402,7 @@ if __name__ == '__main__':
 
     def load_settings_from_local_json():
         try:
-            with open('settings.json', 'r', encoding='utf-8') as f:
+            with open(resource_path('settings.json'), 'r', encoding='utf-8') as f:
                 return json.load(f)
             print(f"Keymaps loaded from {'settings.json'}.")
         except Exception as e:

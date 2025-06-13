@@ -11,7 +11,7 @@ import re  # For regex parsing
 import threading
 import queue
 from PyQt5.QtCore import QSizeF, QPointF, pyqtSignal, Qt, QPoint, QRectF, QTimer, QEvent, QRect, QObject
-from PyQt5.QtGui import QKeySequence, QPainter, QColor, QFontMetrics, QMouseEvent, QKeyEvent, QFont, QWindow
+from PyQt5.QtGui import QKeySequence, QPainter, QColor, QFontMetrics, QMouseEvent, QKeyEvent, QFont, QWindow, QIcon
 from PyQt5.QtWidgets import QWidget, QHBoxLayout, QLabel, QSpacerItem, QSizePolicy, QPushButton, QFrame, QVBoxLayout, \
     QMainWindow, QSizeGrip, QStackedWidget, QApplication
 
@@ -22,7 +22,16 @@ from overlay_widget import OverlayWidget
 from settings_dialog import SettingsDialog
 from sidebar_widget import SidebarWidget
 
-# Helper class for non-blocking subprocess output reading
+
+# Helper function to get the absolute path to resource files, compatible with PyInstaller
+def resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
 
 
 # Constants for window resizing
@@ -46,16 +55,6 @@ SCRCPY_NATIVE_HEIGHT = 1080  # Native resolution for ADB tap commands
 KEYMAP_FILE = "keymaps.json"  # Local JSON file for keymap storage
 
 
-def resource_path(relative_path):
-    """ Get absolute path to resource, works for dev and for PyInstaller """
-    try:
-        # PyInstaller creates a temp folder and stores path in _MEIPASS
-        base_path = sys._MEIPASS
-    except Exception:
-        base_path = os.path.abspath(".")
-    return os.path.join(base_path, relative_path)
-
-
 # --- Main Application Window ---
 class MyQtApp(QMainWindow):
     _gripSize = 8
@@ -64,8 +63,10 @@ class MyQtApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Bonito")
+        self.setWindowIcon(QIcon(resource_path('icon.ico')))
         self.settings = {}
         self.setGeometry(100, 100, 1200, 800)
+        # Use resource_path for style.css
         self.setStyleSheet(self.load_stylesheet_from_file('style.css'))
         self.setMouseTracking(True)
         self.edit_mode_active = False
@@ -136,6 +137,13 @@ class MyQtApp(QMainWindow):
 
         self.keyboard_status_updated.connect(self._update_keyboard_status)
 
+        # Initialize ADB shell process for continuous keyboard status checks
+        self.adb_shell_process = None
+        self.adb_output_queue = queue.Queue()
+        self.adb_reader_thread = None
+        self._start_persistent_adb_shell() # Added this to ensure persistent ADB shell starts
+
+
     def load_stylesheet_from_file(self, filepath: str) -> str:
         """
         Loads a stylesheet from a given file path and returns its content as a string.
@@ -144,16 +152,17 @@ class MyQtApp(QMainWindow):
         Returns:
             str: The content of the CSS file, or an empty string if the file is not found.
         """
-        if not os.path.exists(filepath):
-            print(f"Warning: Stylesheet file not found at {filepath}")
+        actual_filepath = resource_path(filepath) # Use the helper function here
+        if not os.path.exists(actual_filepath):
+            print(f"Warning: Stylesheet file not found at {actual_filepath}")
             return ""
 
         try:
-            with open(filepath, 'r', encoding='utf-8') as f:
+            with open(actual_filepath, 'r', encoding='utf-8') as f:
                 stylesheet_content = f.read()
             return stylesheet_content
         except Exception as e:
-            print(f"Error loading stylesheet from {filepath}: {e}")
+            print(f"Error loading stylesheet from {actual_filepath}: {e}")
             return ""
 
     def get_key_text_for_app(self, qt_key_code: int) -> str:
@@ -206,34 +215,37 @@ class MyQtApp(QMainWindow):
 
     def save_keymaps_to_local_json(self, keymaps_list: list):
         serializable_keymaps = [km.to_dict() for km in keymaps_list]
+        keymap_file_path = resource_path(KEYMAP_FILE) # Use the helper here
         try:
-            with open(KEYMAP_FILE, 'w') as f:
+            with open(keymap_file_path, 'w') as f:
                 json.dump(serializable_keymaps, f, indent=4)
-            print(f"Keymaps saved to {KEYMAP_FILE} successfully.")
+            print(f"Keymaps saved to {keymap_file_path} successfully.")
         except Exception as e:
             print(f"Error saving keymaps to local JSON: {e}")
 
     def load_settings_from_local_json(self):
+        settings_file_path = resource_path('settings.json') # Use the helper here
         try:
-            with open('settings.json', 'r', encoding='utf-8') as f:
+            with open(settings_file_path, 'r', encoding='utf-8') as f:
                 self.settings = json.load(f)
-            print(f"Keymaps loaded from {'settings.json'}.")
+            print(f"Settings loaded from {settings_file_path}.")
         except Exception as e:
-            print(f"Error loading keymaps from {'settings.json'}: {e}. Starting with empty keymaps.")
+            print(f"Error loading settings from {settings_file_path}: {e}. Starting with empty settings.")
 
     def load_keymaps_from_local_json(self):
         loaded_keymaps = []
 
-        if os.path.exists(KEYMAP_FILE):
+        keymap_file_path = resource_path(KEYMAP_FILE) # Use the helper here
+        if os.path.exists(keymap_file_path):
             try:
-                with open(KEYMAP_FILE, 'r', encoding='utf-8') as f:
+                with open(keymap_file_path, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                     loaded_keymaps = [Keymap.from_dict(km_data) for km_data in data]
-                print(f"Keymaps loaded from {KEYMAP_FILE}.")
+                print(f"Keymaps loaded from {keymap_file_path}.")
             except Exception as e:
-                print(f"Error loading keymaps from {KEYMAP_FILE}: {e}. Starting with empty keymaps.")
+                print(f"Error loading keymaps from {keymap_file_path}: {e}. Starting with empty keymaps.")
         else:
-            print(f"{KEYMAP_FILE} not found, starting with empty keymaps.")
+            print(f"{keymap_file_path} not found, starting with empty keymaps.")
             initial_keymap_circle = Keymap(normalized_size=(100 / SCRCPY_NATIVE_WIDTH, 100 / SCRCPY_NATIVE_HEIGHT),
                                            keycombo=[Qt.Key_Shift, Qt.Key_A],
                                            normalized_position=(50 / SCRCPY_NATIVE_WIDTH, 50 / SCRCPY_NATIVE_HEIGHT),
@@ -243,7 +255,7 @@ class MyQtApp(QMainWindow):
                                                                                        300 / SCRCPY_NATIVE_HEIGHT),
                                              type="circle")
             loaded_keymaps = [initial_keymap_circle, secondary_keymap_circle]
-            self.save_keymaps_to_local_json(loaded_keymaps)
+            self.save_keymaps_to_local_json(loaded_keymaps) # This will save to the resource_path now
 
         self.current_instance_keymaps[:] = loaded_keymaps
         self.play_overlay.set_keymaps(self.current_instance_keymaps)
@@ -322,13 +334,79 @@ class MyQtApp(QMainWindow):
         super().moveEvent(event)
         self.update_global_overlay_geometry()
 
-    def _is_soft_keyboard_active_blocking(self) -> bool:
+    # --- Start of new persistent ADB shell logic (from previous response) ---
+    def _start_persistent_adb_shell(self):
+        """Starts a persistent ADB shell process for continuous input method status checks."""
+        if self.adb_shell_process:
+            self.adb_shell_process.terminate()  # Ensure previous process is stopped
         try:
-            command = 'adb shell "dumpsys input_method | grep mInputShown"'
-            result = subprocess.run(command, shell=True, capture_output=True, text=True, check=True, timeout=5)
-            return "mInputShown=true" in result.stdout.strip()
-        except Exception:
+            # Use 'adb shell' directly to maintain an interactive shell session
+            self.adb_shell_process = subprocess.Popen(
+                ['adb', 'shell'],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+            self.adb_reader_thread = threading.Thread(
+                target=self._read_adb_output_continuously,
+                args=(self.adb_shell_process.stdout, self.adb_output_queue)
+            )
+            self.adb_reader_thread.daemon = True
+            self.adb_reader_thread.start()
+            print("Persistent ADB shell process started.")
+        except Exception as e:
+            print(f"Error starting persistent ADB shell: {e}")
+            self.adb_shell_process = None
+
+    def _read_adb_output_continuously(self, stdout, output_queue):
+        """Reads output from the ADB shell continuously and puts it in a queue."""
+        while True:
+            line = stdout.readline()
+            if not line:
+                break
+            output_queue.put(line.strip())
+
+    def _is_soft_keyboard_active_blocking(self) -> bool:
+        """
+        Queries the persistent ADB shell for soft keyboard status with a timeout.
+        """
+        if not self.adb_shell_process or not self.adb_shell_process.stdin:
+            print("ADB shell process not running or stdin not available. Attempting to restart...")
+            self._start_persistent_adb_shell()
             return False
+
+        try:
+            # Send the command to the persistent shell
+            self.adb_shell_process.stdin.write('dumpsys input_method | grep mInputShown\n')
+            self.adb_shell_process.stdin.flush()
+
+            start_time = time.time()
+            timeout = 0.3  # 300ms timeout
+
+            while True:
+                if time.time() - start_time > timeout:
+                    # print("ADB keyboard status check timed out.")
+                    return False  # Timeout
+
+                try:
+                    # Non-blocking read from the queue
+                    line = self.adb_output_queue.get(timeout=0.05) # Small timeout for queue.get
+                    if "mInputShown=true" in line:
+                        return True
+                    elif "mInputShown=false" in line:
+                        return False
+                except queue.Empty:
+                    # No new output, continue waiting or checking timeout
+                    pass
+                except Exception as e:
+                    print(f"Error reading from ADB output queue: {e}")
+                    return False
+        except Exception as e:
+            print(f"Error sending command to ADB shell: {e}")
+            return False
+    # --- End of new persistent ADB shell logic ---
 
     def _start_keyboard_status_check(self):
         if hasattr(self, '_keyboard_check_thread') and self._keyboard_check_thread.is_alive():
@@ -503,6 +581,11 @@ class MyQtApp(QMainWindow):
     def closeEvent(self, event):
         print("Closing application, stopping all Scrcpy processes...")
         self.keyboard_check_timer.stop()
+        if self.adb_shell_process: # Make sure this is present from previous modification
+            self.adb_shell_process.stdin.close()
+            self.adb_shell_process.terminate()
+            self.adb_shell_process.wait(timeout=1) # Give it a moment to terminate
+            print("Persistent ADB shell process terminated.")
         self.play_overlay.hide()
         self.edit_overlay.hide()
         self.play_overlay.deleteLater()
@@ -527,6 +610,7 @@ if __name__ == '__main__':
 
     app = QApplication(sys.argv)
     app.setFont(QFont("Inter", 10))
+    app.setWindowIcon(QIcon(resource_path('icon.ico'))) # Use your icon file name here
     window = MyQtApp()
     window.show()
     sys.exit(app.exec_())
