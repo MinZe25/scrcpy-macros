@@ -46,6 +46,16 @@ SCRCPY_NATIVE_HEIGHT = 1080  # Native resolution for ADB tap commands
 KEYMAP_FILE = "keymaps.json"  # Local JSON file for keymap storage
 
 
+def resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
+
+
 # --- Main Application Window ---
 class MyQtApp(QMainWindow):
     _gripSize = 8
@@ -53,7 +63,7 @@ class MyQtApp(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Bonito Integrated Controller")
+        self.setWindowTitle("Bonito")
         self.settings = {}
         self.setGeometry(100, 100, 1200, 800)
         self.setStyleSheet(self.load_stylesheet_from_file('style.css'))
@@ -476,7 +486,8 @@ class MyQtApp(QMainWindow):
                     center_y_native = int(pixel_y_native + pixel_height_native / 2)
                     if keymap.hold:
                         duration = self.settings.get("general_settings", {}).get("hold_time", 100)
-                        self.send_scrcpy_swipe(center_x_native, center_y_native, center_x_native, center_y_native, duration)
+                        self.send_scrcpy_swipe(center_x_native, center_y_native, center_x_native, center_y_native,
+                                               duration)
                     else:
                         self.send_scrcpy_tap(center_x_native, center_y_native)
                     event.accept()

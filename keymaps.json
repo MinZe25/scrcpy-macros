@@ -1,19 +1,6 @@
 [
     {
         "normalized_size": [
-            0.028070175438596492,
-            0.0499219968798752
-        ],
-        "keycombo": [],
-        "normalized_position": [
-            0.6728070175438596,
-            0.22464898595943839
-        ],
-        "type": "circle",
-        "hold": false
-    },
-    {
-        "normalized_size": [
             0.021367521367521368,
             0.037993920972644375
         ],
@@ -221,5 +208,20 @@
         ],
         "type": "circle",
         "hold": true
+    },
+    {
+        "normalized_size": [
+            0.021367521367521368,
+            0.037993920972644375
+        ],
+        "keycombo": [
+            75
+        ],
+        "normalized_position": [
+            0.9735042735042735,
+            0.7826747720364742
+        ],
+        "type": "circle",
+        "hold": false
     }
 ]

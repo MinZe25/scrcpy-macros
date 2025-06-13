@@ -16,7 +16,7 @@ class MainContentAreaWidget(QWidget):
     def __init__(self, instance_id: int, settings: dict, title_base: str, device_serial: str = None, parent=None, ):
         super().__init__(parent)
         self.start_instance = 0
-        self.start = False
+        self.start = True
         self.start = self.start or self.start_instance == instance_id
         self.settings = settings
         self.setObjectName("MainContentWidget")
