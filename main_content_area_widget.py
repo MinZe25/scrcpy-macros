@@ -47,7 +47,7 @@ class MainContentAreaWidget(QWidget):
 
         self.scrcpy_output_timer.timeout.connect(self._read_scrcpy_output)
         if self.start:
-            QTimer.singleShot(1000 * instance_id, self.start_scrcpy)
+            QTimer.singleShot(1300 * instance_id, self.start_scrcpy)
         self.installEventFilter(self)
 
     def _read_scrcpy_output(self):
