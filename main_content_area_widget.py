@@ -47,7 +47,7 @@ class MainContentAreaWidget(QWidget):
 
         self.scrcpy_output_timer.timeout.connect(self._read_scrcpy_output)
         if self.start:
-            QTimer.singleShot(1300 * instance_id, self.start_scrcpy)
+            QTimer.singleShot(2000 * instance_id, self.start_scrcpy)
         self.installEventFilter(self)
 
     def _read_scrcpy_output(self):
@@ -80,6 +80,8 @@ class MainContentAreaWidget(QWidget):
             # Check if TCPIP is enabled and an address is provided, then extend the command.
             if self.settings.get('use_tcpip') and self.settings.get('tcpip_address'):
                 cmd.extend([f"--tcpip={self.settings.get('tcpip_address')}"])
+            else:
+                cmd.extend(["-d"])
 
             # Check if a video codec is specified, then extend the command.
             if self.settings.get('video_codec'):

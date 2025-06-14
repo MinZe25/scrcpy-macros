@@ -41,9 +41,8 @@ SCRCPY_WINDOW_TITLE_BASE = "Lindo_Scrcpy_Instance"
 # Aspect ratio of the Scrcpy display
 # From '--new-display=1920x1080'
 SCRCPY_ASPECT_RATIO = 16.0 / 9.0
-SCRCPY_NATIVE_WIDTH = 1920  # Native resolution for ADB tap commands
-SCRCPY_NATIVE_HEIGHT = 1080  # Native resolution for ADB tap commands
-KEYMAP_FILE = "keymaps.json"  # Local JSON file for keymap storage
+SCRCPY_NATIVE_WIDTH = 1280  # Native resolution for ADB tap commands
+SCRCPY_NATIVE_HEIGHT = 720  # Native resolution for ADB tap commands
 
 
 def resource_path(relative_path):
@@ -54,6 +53,9 @@ def resource_path(relative_path):
     except Exception:
         base_path = os.path.abspath(".")
     return os.path.join(base_path, relative_path)
+
+
+KEYMAP_FILE = resource_path("keymaps.json")  # Local JSON file for keymap storage
 
 
 # --- Main Application Window ---
@@ -67,7 +69,7 @@ class MyQtApp(QMainWindow):
         self.setWindowIcon(QIcon(resource_path('icon.ico')))
         self.settings = {}
         self.setGeometry(100, 100, 1200, 800)
-        self.setStyleSheet(self.load_stylesheet_from_file('style.css'))
+        self.setStyleSheet(self.load_stylesheet_from_file(resource_path('style.css')))
         self.setMouseTracking(True)
         self.edit_mode_active = False
 
@@ -167,7 +169,12 @@ class MyQtApp(QMainWindow):
         current_page = self.stacked_widget.currentWidget()
         if current_page and current_page.scrcpy_display_id is not None:
             device_ip = "192.168.1.38"
-            adb_cmd = ['adb', '-s', device_ip, 'shell', 'input', 'keyevent', keycode]
+            adb_cmd = ['adb']
+            if current_page.settings.get('use_tcpip') and current_page.settings.get('tcpip_address'):
+                adb_cmd.extend(['-s', device_ip])
+            else:
+                device_ip = "usb"
+            adb_cmd.extend(['shell', 'input', 'keyevent', keycode])
             try:
                 subprocess.Popen(adb_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                  creationflags=subprocess.CREATE_NO_WINDOW)
@@ -181,8 +188,13 @@ class MyQtApp(QMainWindow):
         current_page = self.stacked_widget.currentWidget()
         if current_page and current_page.scrcpy_display_id is not None:
             display_id, device_ip = current_page.scrcpy_display_id, "192.168.1.38"
-            adb_cmd = ['adb', '-s', device_ip, 'shell', 'input', '-d', str(display_id), 'swipe', str(x1), str(y1),
-                       str(x2), str(y2), str(duration)]
+            adb_cmd = ['adb']
+            if current_page.settings.get('use_tcpip') and current_page.settings.get('tcpip_address'):
+                adb_cmd.extend(['-s', device_ip])
+            else:
+                device_ip = "usb"
+            adb_cmd.extend(['shell', 'input', '-d', str(display_id), 'swipe', str(x1), str(y1),
+                            str(x2), str(y2), str(duration)])
             try:
                 subprocess.Popen(adb_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                  creationflags=subprocess.CREATE_NO_WINDOW)
@@ -195,7 +207,12 @@ class MyQtApp(QMainWindow):
         current_page = self.stacked_widget.currentWidget()
         if current_page and current_page.scrcpy_display_id is not None:
             display_id, device_ip = current_page.scrcpy_display_id, "192.168.1.38"
-            adb_cmd = ['adb', '-s', device_ip, 'shell', 'input', '-d', str(display_id), 'tap', str(x), str(y)]
+            adb_cmd = ['adb']
+            if current_page.settings.get('use_tcpip') and current_page.settings.get('tcpip_address'):
+                adb_cmd.extend(['-s', device_ip])
+            else:
+                device_ip = "usb"
+            adb_cmd.extend(['shell', 'input', '-d', str(display_id), 'tap', str(x), str(y)])
             try:
                 subprocess.Popen(adb_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                  creationflags=subprocess.CREATE_NO_WINDOW)
@@ -216,7 +233,7 @@ class MyQtApp(QMainWindow):
 
     def load_settings_from_local_json(self):
         try:
-            with open('settings.json', 'r', encoding='utf-8') as f:
+            with open(resource_path('settings.json'), 'r', encoding='utf-8') as f:
                 self.settings = json.load(f)
             print(f"Keymaps loaded from {'settings.json'}.")
         except Exception as e:
@@ -528,7 +545,7 @@ if __name__ == '__main__':
 
     app = QApplication(sys.argv)
     app.setFont(QFont("Inter", 10))
-    app.setWindowIcon(QIcon(resource_path('icon.ico'))) # Use your icon file name here
+    app.setWindowIcon(QIcon(resource_path('icon.ico')))  # Use your icon file name here
     window = MyQtApp()
     window.show()
     sys.exit(app.exec_())
