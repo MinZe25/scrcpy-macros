@@ -10,27 +10,15 @@
   "instances": [
     {
       "instance_name": "Main",
-      "use_tcpip": true,
+      "use_tcpip": false,
       "tcpip_address": "192.168.1.38",
       "video_codec": "h265",
       "max_fps": 60,
-      "resolution": "1920x1080",
-      "start_app": "com.ankama.dofustouch",
-      "turn_screen_off": true,
+      "resolution": "1280x720",
+      "start_app": null,
+      "turn_screen_off": false,
       "no_decorations": false,
       "no_audio": false
-    },
-    {
-      "instance_name": "Second",
-      "use_tcpip": true,
-      "tcpip_address": "192.168.1.38",
-      "video_codec": "h265",
-      "max_fps": 60,
-      "resolution": "1920x1080",
-      "start_app": "com.ankama.dofustouci",
-      "turn_screen_off": true,
-      "no_decorations": false,
-      "no_audio": true
     }
   ]
 }
