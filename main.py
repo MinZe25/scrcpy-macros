@@ -1,23 +1,18 @@
-import sys
-import subprocess
-import win32gui
-import win32con
-import time
-import math  # Import math for sqrt if .norm() is not available
 import json  # For serializing/deserializing keymap data
 import os  # For checking file existence
-import win32api  # Added for simulating mouse taps
-import re  # For regex parsing
+import subprocess
+import sys
 import threading
-import queue
-from PyQt5.QtCore import QSizeF, QPointF, pyqtSignal, Qt, QPoint, QRectF, QTimer, QEvent, QRect, QObject
-from PyQt5.QtGui import QKeySequence, QPainter, QColor, QFontMetrics, QMouseEvent, QKeyEvent, QFont, QWindow, QIcon
-from PyQt5.QtWidgets import QWidget, QHBoxLayout, QLabel, QSpacerItem, QSizePolicy, QPushButton, QFrame, QVBoxLayout, \
-    QMainWindow, QSizeGrip, QStackedWidget, QApplication
+
+import win32con
+import win32gui
+from PyQt5.QtCore import pyqtSignal, Qt, QPoint, QTimer
+from PyQt5.QtGui import QKeySequence, QPainter, QColor, QKeyEvent, QFont, QIcon
+from PyQt5.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, \
+    QMainWindow, QStackedWidget, QApplication
 
 from keymap import Keymap
 from main_content_area_widget import MainContentAreaWidget
-from non_blocking_stream_reader import NonBlockingStreamReader
 from overlay_widget import OverlayWidget
 from settings_dialog import SettingsDialog
 from sidebar_widget import SidebarWidget
@@ -132,8 +127,45 @@ class MyQtApp(QMainWindow):
         self.load_keymaps_from_local_json()
 
         self.is_soft_keyboard_active = False
+        self.adb_shell_process = None
         self.keyboard_status_updated.connect(self._update_keyboard_status)
         self._start_logcat_monitoring()
+
+    def _get_adb_base_command(self):
+        """Get the base ADB command with device selection"""
+        current_page = self.stacked_widget.currentWidget()
+        if not current_page or current_page is None:
+            return None
+
+        device_ip = "192.168.1.38"
+        adb_cmd = ['adb']
+        if current_page.settings.get('use_tcpip') and current_page.settings.get('tcpip_address'):
+            adb_cmd.extend(['-s', device_ip])
+        return adb_cmd
+
+    def _ensure_shell(self):
+        """Ensure the keyevent shell is running"""
+        if self.adb_shell_process is None or self.adb_shell_process.poll() is not None:
+            adb_cmd = self._get_adb_base_command()
+            if adb_cmd is None:
+                return False
+
+            adb_cmd.append('shell')
+            try:
+                self.adb_shell_process = subprocess.Popen(
+                    adb_cmd,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    creationflags=subprocess.CREATE_NO_WINDOW
+                )
+                print("Started persistent keyevent shell")
+                return True
+            except Exception as e:
+                print(f"Error starting keyevent shell: {e}")
+                return False
+        return True
 
     def _start_logcat_monitoring(self):
         """Start the logcat monitoring thread for keyboard status detection."""
@@ -204,60 +236,57 @@ class MyQtApp(QMainWindow):
         if qt_key_code == Qt.Key_Alt: return "Alt"
         return QKeySequence(qt_key_code).toString()
 
+    def _send_shell_command(self, command: str):
+        """Send a command to the persistent shell"""
+        if not self._ensure_shell():
+            print(f"Cannot send command '{command}': Failed to establish shell connection")
+            return False
+
+        try:
+            self.adb_shell_process.stdin.write(command + '\n')
+            self.adb_shell_process.stdin.flush()
+            print(f"Sent command: {command}")
+            return True
+        except Exception as e:
+            print(f"Error sending command via shell: {e}")
+            # Reset shell on error
+            self.adb_shell_process = None
+            return False
+
     def send_adb_keyevent(self, keycode: str):
+        """Send keyevent using persistent shell"""
         current_page = self.stacked_widget.currentWidget()
         if current_page and current_page.scrcpy_display_id is not None:
-            device_ip = "192.168.1.38"
-            adb_cmd = ['adb']
-            if current_page.settings.get('use_tcpip') and current_page.settings.get('tcpip_address'):
-                adb_cmd.extend(['-s', device_ip])
-            else:
-                device_ip = "usb"
-            adb_cmd.extend(['shell', 'input', 'keyevent', keycode])
-            try:
-                subprocess.Popen(adb_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                 creationflags=subprocess.CREATE_NO_WINDOW)
-                print(f"Sent ADB keyevent '{keycode}' to {device_ip}")
-            except Exception as e:
-                print(f"Error sending ADB keyevent: {e}")
+            command = f"input keyevent {keycode}"
+            if self._send_shell_command(command):
+                device_ip = "192.168.1.38" if current_page.settings.get('use_tcpip') else "usb"
+                print(f"Sent ADB keyevent '{keycode}' to {device_ip} via persistent shell")
         else:
             print(f"Cannot send ADB keyevent '{keycode}': No active Scrcpy page or display ID not detected.")
 
     def send_scrcpy_swipe(self, x1: int, y1: int, x2: int, y2: int, duration: int):
+        """Send swipe using persistent shell"""
         current_page = self.stacked_widget.currentWidget()
         if current_page and current_page.scrcpy_display_id is not None:
-            display_id, device_ip = current_page.scrcpy_display_id, "192.168.1.38"
-            adb_cmd = ['adb']
-            if current_page.settings.get('use_tcpip') and current_page.settings.get('tcpip_address'):
-                adb_cmd.extend(['-s', device_ip])
-            else:
-                device_ip = "usb"
-            adb_cmd.extend(['shell', 'input', '-d', str(display_id), 'swipe', str(x1), str(y1),
-                            str(x2), str(y2), str(duration)])
-            try:
-                subprocess.Popen(adb_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                 creationflags=subprocess.CREATE_NO_WINDOW)
+            display_id = current_page.scrcpy_display_id
+            command = f"input -d {display_id} swipe {x1} {y1} {x2} {y2} {duration}"
+            if self._send_shell_command(command):
+                device_ip = "192.168.1.38" if current_page.settings.get('use_tcpip') else "usb"
                 print(
-                    f"Sent ADB swipe to {device_ip} (display {display_id}) from ({x1}, {y1}) to ({x2}, {y2}) with duration {duration}ms")
-            except Exception as e:
-                print(f"Error sending ADB swipe: {e}")
+                    f"Sent ADB swipe to {device_ip} (display {display_id}) from ({x1}, {y1}) to ({x2}, {y2}) with duration {duration}ms via persistent shell")
+        else:
+            print("Cannot send ADB swipe: No active Scrcpy page or display ID not detected.")
 
     def send_scrcpy_tap(self, x: int, y: int):
+        """Send tap using persistent shell"""
         current_page = self.stacked_widget.currentWidget()
         if current_page and current_page.scrcpy_display_id is not None:
-            display_id, device_ip = current_page.scrcpy_display_id, "192.168.1.38"
-            adb_cmd = ['adb']
-            if current_page.settings.get('use_tcpip') and current_page.settings.get('tcpip_address'):
-                adb_cmd.extend(['-s', device_ip])
-            else:
-                device_ip = "usb"
-            adb_cmd.extend(['shell', 'input', '-d', str(display_id), 'tap', str(x), str(y)])
-            try:
-                subprocess.Popen(adb_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                 creationflags=subprocess.CREATE_NO_WINDOW)
-                print(f"Sent ADB tap to {device_ip} (display {display_id}) at coordinates ({x}, {y})")
-            except Exception as e:
-                print(f"Error sending ADB tap: {e}")
+            display_id = current_page.scrcpy_display_id
+            command = f"input -d {display_id} tap {x} {y}"
+            if self._send_shell_command(command):
+                device_ip = "192.168.1.38" if current_page.settings.get('use_tcpip') else "usb"
+                print(
+                    f"Sent ADB tap to {device_ip} (display {display_id}) at coordinates ({x}, {y}) via persistent shell")
         else:
             print("Cannot send ADB tap: No active Scrcpy page or display ID not detected.")
 
@@ -538,8 +567,18 @@ class MyQtApp(QMainWindow):
             event.accept()
 
     def closeEvent(self, event):
+        """Clean up persistent shell on close"""
         print("Closing application, stopping all Scrcpy processes...")
-        self.keyboard_check_timer.stop()
+        # Close persistent shell
+        if self.adb_shell_process:
+            try:
+                self.adb_shell_process.stdin.close()
+                self.adb_shell_process.terminate()
+                self.adb_shell_process.wait(timeout=2)
+                print("Closed persistent ADB shell")
+            except Exception as e:
+                print(f"Error closing ADB shell: {e}")
+
         self.play_overlay.hide()
         self.edit_overlay.hide()
         self.play_overlay.deleteLater()
