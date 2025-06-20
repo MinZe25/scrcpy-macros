@@ -132,12 +132,51 @@ class MyQtApp(QMainWindow):
         self.load_keymaps_from_local_json()
 
         self.is_soft_keyboard_active = False
-        self.keyboard_check_timer = QTimer(self)
-        self.keyboard_check_timer.setInterval(250)  # Check 4 times a second
-        self.keyboard_check_timer.timeout.connect(self._start_keyboard_status_check)
-        self.keyboard_check_timer.start()
-
         self.keyboard_status_updated.connect(self._update_keyboard_status)
+        self._start_logcat_monitoring()
+
+    def _start_logcat_monitoring(self):
+        """Start the logcat monitoring thread for keyboard status detection."""
+        self.logcat_monitor_thread = threading.Thread(target=self._monitor_logcat_for_keyboard)
+        self.logcat_monitor_thread.daemon = True
+        self.logcat_monitor_thread.start()
+
+    def _monitor_logcat_for_keyboard(self):
+        """Monitor logcat for ImeTracker events to detect keyboard status changes."""
+        try:
+            # Start logcat process with ImeTracker filter
+            process = subprocess.Popen(
+                ['adb', 'shell', 'logcat | grep ImeTracker'],
+                shell=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True,
+                bufsize=1
+            )
+
+            print("Started logcat monitoring for ImeTracker events...")
+
+            for line in iter(process.stdout.readline, ''):
+                line = line.strip()
+                if not line:
+                    continue
+
+                # Check for keyboard show event
+                if "onRequestShow at ORIGIN_CLIENT reason SHOW_SOFT_INPUT" in line:
+                    print(f"Keyboard show detected")
+                    self.keyboard_status_updated.emit(True)
+
+                # Check for keyboard hide events
+                elif ("onCancelled at PHASE_SERVER_SHOULD_HIDE" in line or
+                      "onCancelled at PHASE_CLIENT_ALREADY_HIDDEN" in line):
+                    print(f"Keyboard hide detected")
+                    self.keyboard_status_updated.emit(False)
+
+        except Exception as e:
+            print(f"Error in logcat monitoring: {e}")
+            # Fallback to old method if logcat monitoring fails
+            print("Falling back to periodic keyboard status checking...")
+            # self._start_fallback_keyboard_monitoring()
 
     def load_stylesheet_from_file(self, filepath: str) -> str:
         """
@@ -340,32 +379,12 @@ class MyQtApp(QMainWindow):
         super().moveEvent(event)
         self.update_global_overlay_geometry()
 
-    def _is_soft_keyboard_active_blocking(self) -> bool:
-        try:
-            command = 'adb shell "dumpsys input_method | grep mInputShown"'
-            result = subprocess.run(command, shell=True, capture_output=True, text=True, check=True, timeout=5)
-            return "mInputShown=true" in result.stdout.strip()
-        except Exception:
-            return False
-
-    def _start_keyboard_status_check(self):
-        if hasattr(self, '_keyboard_check_thread') and self._keyboard_check_thread.is_alive():
-            return
-        self._keyboard_check_thread = threading.Thread(target=self._run_keyboard_check_in_thread)
-        self._keyboard_check_thread.daemon = True
-        self._keyboard_check_thread.start()
-
-    def _run_keyboard_check_in_thread(self):
-        active = self._is_soft_keyboard_active_blocking()
-        self.keyboard_status_updated.emit(active)
-
     def _update_keyboard_status(self, is_active: bool):
         if self.is_soft_keyboard_active == is_active:
             return  # No change, do nothing.
         self.is_soft_keyboard_active = is_active
         print(f"Soft keyboard active status changed to: {self.is_soft_keyboard_active}")
         if is_active:
-            # Soft keyboard is ON. Give focus to Scrcpy.
             current_page = self.stacked_widget.currentWidget()
             if current_page and current_page.scrcpy_hwnd:
                 try:
