@@ -572,7 +572,6 @@ class MyQtApp(QMainWindow):
         # Close persistent shell
         if self.adb_shell_process:
             try:
-                self.adb_shell_process.stdin.close()
                 self.adb_shell_process.terminate()
                 self.adb_shell_process.wait(timeout=2)
                 print("Closed persistent ADB shell")
